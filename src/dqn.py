@@ -19,6 +19,7 @@ Visualize learning
 
 '''
 
+import math
 import random
 import numpy as np
 import matplotlib.pyplot as plt
@@ -75,7 +76,7 @@ class DQN(nn.Module):
     def __init__(self, in_dim, out_dim):
         super(DQN, self).__init__()
         self.fc1 = nn.Linear(in_dim, 300)
-        self.fc2 = nn.Linear(100, 100)
+        self.fc2 = nn.Linear(300, 100)
         self.fc3 = nn.Linear(100, out_dim)
 
     def forward(self, x):
@@ -87,9 +88,12 @@ class DQN(nn.Module):
 ### Data Pre-Processing | may put this in another file
 #################################################################
 
-data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/highres0.csv'
-
-def load_data(path, train_length, params, period):
+# Returns two values
+# 1) train_environment: a list train_length*#params long corresponding to a history of 
+# train_length at each period interval
+# 2) env_value: a list of floats corresponding to the ask value at the current timestep
+# TODO: only list current timestep, not all
+def parse_data(path, train_length, params, period):
     with open(path, 'r') as f:
         data = csv.reader(f)
         data = list(data)
@@ -98,7 +102,7 @@ def load_data(path, train_length, params, period):
         data = np.array(data)
 
         train_environment = []
-        train_signal = []
+        env_value = []
 
         # Multiplex periods of > 1 second
         for i in range(period):
@@ -120,17 +124,138 @@ def load_data(path, train_length, params, period):
                 for j in indices:
                     train_elem.extend(tempdata[j][begin:end])
                 train_environment.append(train_elem)
+                env_value.append(tempdata[labels.index('ask')][end-1])
+
                 begin += 1
                 end += 1
 
-    print(len(train_environment[1]))
-    print(train_environment[0])
-    print(train_environment[1])
-    print(train_environment[2])
+    train_environment = np.array(train_environment)
+    train_environment = train_environment.astype(float)
+    train_environment = torch.from_numpy(train_environment).type('torch.FloatTensor').to(device)
+    #train_environment = train_environment.double()
+    print(train_environment)
 
-    return 0
+    env_value = np.array(env_value)
+    env_value = env_value.astype(float)
 
-load_data(data_path, 10, ['bidVolume', 'ask', 'askVolume'], 10)
+    #print(len(train_environment[1]))
+    #print(train_environment[0])
+    #print(env_value[0])
+    #print(train_environment[1])
+    #print(train_environment[2])
+
+    return train_environment, env_value
+
+#################################################################
+### Utilities | may put this in another file
+#################################################################
+
+BATCH_SIZE = 128
+GAMMA = 0.999
+EPS_START = 0.9
+EPS_END = 0.05
+EPS_DECAY = 200
+TARGET_UPDATE = 10
+
+data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/highres0.csv'
+train_period = 15  # Seconds between market checks
+train_length = 40
+train_params = ['time', 'bidVolume', 'ask', 'askVolume']
+n_actions = 3  # Buy, hold, sell
+mem_capacity = 10000
+
+input_dimension = train_length*len(train_params)
+output_dimension = n_actions
+
+policy_net = DQN(input_dimension, output_dimension).to(device)
+target_net = DQN(input_dimension, output_dimension).to(device)
+target_net.load_state_dict(policy_net.state_dict())
+target_net.eval()
+
+optimizer = optim.RMSprop(policy_net.parameters())
+
+memory = ReplayMemory(mem_capacity)
+
+total_steps = 0
+
+def select_action(state):
+    global total_steps
+    rand = random.random()
+    epsilon_threshold = EPS_END + (EPS_START - EPS_END)*math.exp(-1. * total_steps/EPS_DECAY)
+    total_steps += 1
+    if rand > epsilon_threshold:
+        print("rand > thresh")
+        with torch.no_grad():
+            policy_net(state)#.max(1)[1].view(1,1)  ######### I'm not sure if this is right for our case
+
+    else:
+        return torch.tensor([[random.randrange(n_actions)]], device=device, dtype=torch.long)
+
+
+# Incentivize legal/illegal moves appropriately
+# Actions: {0:buy, 1:hold, 2:sell}
+def reward_calc(action, asset_status, investment, bought, sold, fee):
+
+    scale = 10
+    # Our money is still in our wallet
+    if asset_status == 0:
+        if action == 0:
+            reward = 0
+        if action == 1:
+            reward = 0
+        # Can't sell assets we don't have
+        if action == 2:
+            reward == -100
+
+    # Our money is out in the asset
+    if asset_status == 1:
+        # Can't buy assets without any cash
+        if action == 0:
+            reward = -100
+        if action == 1:
+            reward = 0
+        if action == 2:
+            reward == scale*((investment*sold - investment*sold*fee) - (investment*bought - investment*bought*fee))
+
+    return reward
+
+#################################################################
+### Model optimization | may put this in another file
+#################################################################
+
+def optimize_model():
+    if len(memory < BATCH_SIZE):
+        return
+
+    transitions = memory.sample(BATCH_SIZE)
+    batch = Transition()
+
+
+#################################################################
+### Model training | may put this in another file
+#################################################################
+
+
+num_episodes = 3
+
+for i_episode in range(num_episodes):
+    # Initialize environment
+    train_env, train_ask = parse_data(data_path, train_length, train_params, train_period)
+    
+    # Track bought and sold prices
+    bought = 0
+    sold = 0
+    for i, state in enumerate(train_env):
+        print("i ", i)
+        print(len(state))
+        print(train_ask[i])
+
+        action = select_action(state)
+        print(action)
+        if action == 0:
+            bought = train_ask[i]
+        if action == 2:
+            sold = train_ask[i]
 
 
 
@@ -140,8 +265,37 @@ load_data(data_path, 10, ['bidVolume', 'ask', 'askVolume'], 10)
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#parse_data(data_path, train_length, train_params, train_period)
+
+
+#################################################################
+### Plotting | may put this in another file
+#################################################################
 
 '''
+
+with open(data_path, 'r') as f:
+    data = csv.reader(f)
+    data = list(data)
+    labels = data.pop(0)
+    #indices = [labels.index(i) for i in params]
+    data = np.array(data)
     bidVolume = []
     ask = []
     askVolume = []
@@ -149,11 +303,13 @@ load_data(data_path, 10, ['bidVolume', 'ask', 'askVolume'], 10)
     time = []
     to_plot = []
     bv = []
+    av = []
+    vwap = []
 
     for row in data:
         time.append(float(row[0])/60)
         to_plot.append(float(row[6]))
-        bv.append(float(row[5]))
+        av.append(float(row[7]))
 
 
     fig, ax1 = plt.subplots()
@@ -161,19 +317,20 @@ load_data(data_path, 10, ['bidVolume', 'ask', 'askVolume'], 10)
     ax1.set_xlabel('time (s)')
     ax1.set_ylabel('Ask', color=color)
     ax1.plot(time, to_plot, color=color)
+    #ax1.plot(time, vwap, color='tab:blue')
     ax1.tick_params(axis='y', labelcolor=color)
 
 
-    ax2 = ax1.twinx()
-    color = 'tab:blue'
-    ax2.set_ylabel('bidVolume', color=color)  # we already handled the x-label with ax1
-    ax2.plot(time, bv, color=color)
-    ax2.tick_params(axis='y', labelcolor=color)
+    #ax2 = ax1.twinx()
+    #color = 'tab:blue'
+    #ax2.set_ylabel('askVolume', color=color)  # we already handled the x-label with ax1
+    #ax2.plot(time, av, color=color)
+    #ax2.tick_params(axis='y', labelcolor=color)
 
     fig.tight_layout()  # otherwise the right y-label is slightly clipped
     plt.show()
-        
-'''
+'''      
+
 
 
 
