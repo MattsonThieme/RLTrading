@@ -82,7 +82,7 @@ class DQN(nn.Module):
     def forward(self, x):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
-        return F.log_softmax(self.fc3(x))
+        return self.fc3(x)
 
 #################################################################
 ### Data Pre-Processing | may put this in another file
@@ -183,12 +183,12 @@ def select_action(state):
     rand = random.random()
     epsilon_threshold = EPS_END + (EPS_START - EPS_END)*math.exp(-1. * total_steps/EPS_DECAY)
     total_steps += 1
+    print("eps thresh: ", epsilon_threshold)
     if rand > epsilon_threshold:
-        print("rand > thresh")
         with torch.no_grad():
-            policy_net(state)#.max(1)[1].view(1,1)  ######### I'm not sure if this is right for our case
-
+            return policy_net(state).max(0)[1].view(1,1)  # Returns the index of the maximum output in a 1x1 tensor
     else:
+        print("Chose randomly...")
         return torch.tensor([[random.randrange(n_actions)]], device=device, dtype=torch.long)
 
 
@@ -205,17 +205,19 @@ def reward_calc(action, asset_status, investment, bought, sold, fee):
             reward = 0
         # Can't sell assets we don't have
         if action == 2:
-            reward == -100
+            print("Whoops, can't sell assets we don't have")
+            reward = -100
 
     # Our money is out in the asset
     if asset_status == 1:
         # Can't buy assets without any cash
         if action == 0:
+            print("Whoops, can't buy assets without cash")
             reward = -100
         if action == 1:
             reward = 0
         if action == 2:
-            reward == scale*((investment*sold - investment*sold*fee) - (investment*bought - investment*bought*fee))
+            reward = scale*((investment*sold - investment*sold*fee) - (investment*bought - investment*bought*fee))
 
     return reward
 
@@ -236,26 +238,40 @@ def optimize_model():
 #################################################################
 
 
-num_episodes = 3
+num_episodes = 1
 
 for i_episode in range(num_episodes):
     # Initialize environment
     train_env, train_ask = parse_data(data_path, train_length, train_params, train_period)
     
+    # Initial investment, will be adjusted as we proceed
+    investment = 1000
+
     # Track bought and sold prices
     bought = 0
     sold = 0
+    asset_status = 0
+    fee = 0.00075
+
     for i, state in enumerate(train_env):
         print("i ", i)
         print(len(state))
         print(train_ask[i])
 
         action = select_action(state)
-        print(action)
+        print("action: ", action)
         if action == 0:
             bought = train_ask[i]
+            asset_status = 1
+            print("Bought at $", bought)
         if action == 2:
             sold = train_ask[i]
+            investment = investment + reward_calc(action, asset_status, investment, bought, sold, fee)
+            print("Sold at $", sold)
+    
+
+
+    print("New total = ", investment)
 
 
 
