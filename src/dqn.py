@@ -87,7 +87,7 @@ class DQN(nn.Module):
 ### Data Pre-Processing | may put this in another file
 #################################################################
 
-data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/crypto/highres.csv'
+data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/highres0.csv'
 
 def load_data(path, train_length, params, period):
     with open(path, 'r') as f:
@@ -97,71 +97,38 @@ def load_data(path, train_length, params, period):
         indices = [labels.index(i) for i in params]
         data = np.array(data)
 
-        train_past = []
-        train_next = []
+        train_environment = []
+        train_signal = []
 
+        # Multiplex periods of > 1 second
         for i in range(period):
-            train_instance = [j for j in range(i, len(data), period)]
-            tempdata = data[train_instance]
-            print(tempdata.shape)
+
+            # Filter data s.t. only rows corresponding to that period remain
+            period_indices = [j for j in range(i, len(data), period)]
+
+            tempdata = data[period_indices]
+
+            # Swap col/rows for easier access 
             tempdata = tempdata.transpose()
-            print(tempdata.shape)
+
+            # Slice indices to determine individual environment states
             begin = 0
             end = train_length
             
-            while end < len(tempdata):
+            while end < len(tempdata[0]):
                 train_elem = []
                 for j in indices:
                     train_elem.extend(tempdata[j][begin:end])
-                train_past.append(train_elem)
+                train_environment.append(train_elem)
+                begin += 1
                 end += 1
 
-    print(train_past[0])
+    print(len(train_environment[1]))
+    print(train_environment[0])
+    print(train_environment[1])
+    print(train_environment[2])
 
-
-
-
-
-
-
-
-    '''
-        bidVolume = []
-        ask = []
-        askVolume = []
-
-        time = []
-        to_plot = []
-        bv = []
-
-        for row in data:
-            time.append(float(row[0])/60)
-            to_plot.append(float(row[6]))
-            bv.append(float(row[5]))
-
-
-        fig, ax1 = plt.subplots()
-        color = 'tab:red'
-        ax1.set_xlabel('time (s)')
-        ax1.set_ylabel('Ask', color=color)
-        ax1.plot(time, to_plot, color=color)
-        ax1.tick_params(axis='y', labelcolor=color)
-
-
-        ax2 = ax1.twinx()
-        color = 'tab:blue'
-        ax2.set_ylabel('bidVolume', color=color)  # we already handled the x-label with ax1
-        ax2.plot(time, bv, color=color)
-        ax2.tick_params(axis='y', labelcolor=color)
-
-        fig.tight_layout()  # otherwise the right y-label is slightly clipped
-        plt.show()
-            
-    '''
-
-
-
-    return hist_data, next_val
+    return 0
 
 load_data(data_path, 10, ['bidVolume', 'ask', 'askVolume'], 10)
 
@@ -172,6 +139,41 @@ load_data(data_path, 10, ['bidVolume', 'ask', 'askVolume'], 10)
 
 
 
+
+
+'''
+    bidVolume = []
+    ask = []
+    askVolume = []
+
+    time = []
+    to_plot = []
+    bv = []
+
+    for row in data:
+        time.append(float(row[0])/60)
+        to_plot.append(float(row[6]))
+        bv.append(float(row[5]))
+
+
+    fig, ax1 = plt.subplots()
+    color = 'tab:red'
+    ax1.set_xlabel('time (s)')
+    ax1.set_ylabel('Ask', color=color)
+    ax1.plot(time, to_plot, color=color)
+    ax1.tick_params(axis='y', labelcolor=color)
+
+
+    ax2 = ax1.twinx()
+    color = 'tab:blue'
+    ax2.set_ylabel('bidVolume', color=color)  # we already handled the x-label with ax1
+    ax2.plot(time, bv, color=color)
+    ax2.tick_params(axis='y', labelcolor=color)
+
+    fig.tight_layout()  # otherwise the right y-label is slightly clipped
+    plt.show()
+        
+'''
 
 
 
