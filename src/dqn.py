@@ -155,13 +155,13 @@ BATCH_SIZE = 128
 GAMMA = 0.999
 EPS_START = 0.9
 EPS_END = 0.05
-EPS_DECAY = 200
+EPS_DECAY = 500
 TARGET_UPDATE = 10
 
 data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/highres0.csv'
 train_period = 15  # Seconds between market checks
 train_length = 40
-train_params = ['time', 'bidVolume', 'ask', 'askVolume']
+train_params = ['bidVolume', 'ask', 'askVolume']
 n_actions = 3  # Buy, hold, sell
 mem_capacity = 10000
 
@@ -186,41 +186,50 @@ def select_action(state):
     rand = random.random()
     epsilon_threshold = EPS_END + (EPS_START - EPS_END)*math.exp(-1. * total_steps/EPS_DECAY)
     total_steps += 1
-    print("eps thresh: ", epsilon_threshold)
+    #print("eps thresh: ", epsilon_threshold)
     if rand > epsilon_threshold:
         with torch.no_grad():
             return policy_net(state).max(0)[1].view(1,1)  # Returns the index of the maximum output in a 1x1 tensor
     else:
-        print("Chose randomly...")
+        #print("Chose randomly...")
         return torch.tensor([[random.randrange(n_actions)]], device=device, dtype=torch.long)
 
 
 # Incentivize legal/illegal moves appropriately
 # Actions: {0:buy, 1:hold, 2:sell}
-def reward_calc(action, asset_status, investment, bought, sold, fee):
+def reward_calc(action, asset_status, investment, bought, sold, hold_time, fee):
 
-    scale = 10
+    action = action.item()
+    print("Asset status: ", asset_status, ", action: ", action)
+    scale = 100
     # Our money is still in our wallet
     if asset_status == 0:
         if action == 0:
+            print("Bought appropriately")
             reward = 0
         if action == 1:
             reward = 0
         # Can't sell assets we don't have
         if action == 2:
-            print("Whoops, can't sell assets we don't have")
+            #print("Whoops, can't sell assets we don't have")
             reward = -100
 
     # Our money is out in the asset
     if asset_status == 1:
         # Can't buy assets without any cash
         if action == 0:
-            print("Whoops, can't buy assets without cash")
+            #print("Whoops, can't buy assets without cash")
             reward = -100
         if action == 1:
             reward = 0
+
         if action == 2:
-            reward = scale*((investment*sold - investment*sold*fee) - (investment*bought - investment*bought*fee))
+            print("Sold appropriately")
+            print("Invested $", investment, " at $", bought, ", sold at $", sold, " with fee = ", fee)
+            #print("*"*30)
+            
+            reward = investment*sold/bought - investment - investment*fee - investment*(sold/bought)*fee
+            print("reward = ", reward)
 
     return torch.tensor([reward]).type('torch.FloatTensor')
 
@@ -233,29 +242,40 @@ def optimize_model():
         return
 
     transitions = memory.sample(BATCH_SIZE)
-    print(transitions[0])
-    print(transitions[1])
-    batch = Transition(*zip(*transitions))
 
-    print("\n\n\n\n\n batch state ", batch.state[0])
-    batch_split = [BATCH_SIZE]*len(batch.state)
-    #state_batch = [list(islice(iter(batch.state, elem)) for elem in batch_split)]
+    batch_state = []
+    batch_action = []
+    batch_reward = []
+    for i, trans in enumerate(transitions):
+        batch_state.append(trans.state)
+        batch_action.append(trans.action[0])
+        batch_reward.append(trans.reward[0])
 
-    #batch_state = 
+    batch_state = torch.stack(batch_state)
+    batch_action = torch.stack(batch_action)
+    batch_reward = torch.stack(batch_reward)
+    #print("\n\n\nbs shape: ", batch_state.size())
+    #print("ba shape: ", batch_action[0][0])#).size())
+    #print("br shape: ", batch_reward.size())
 
-    state_batch = torch.cat(batch.state)
-    print(state_batch)
-    action_batch = torch.cat(batch.action)
-    reward_batch = torch.cat(batch.reward)
+    state_action_values = policy_net(batch_state).gather(1, batch_action)
+    #print("SAV :", state_action_values.size())
 
-    state_action_values = policy_net(state_batch).gather(1, action_batch)
+    loss = F.smooth_l1_loss(state_action_values, batch_reward.unsqueeze(1))
+
+    optimizer.zero_grad()
+    loss.backward()
+    #for param in policy_net.parameters():
+    #    param.grad.data.clamp_(-1,1)
+    optimizer.step()
+
 
 #################################################################
 ### Model training | may put this in another file
 #################################################################
 
 
-num_episodes = 1
+num_episodes = 10
 
 for i_episode in range(num_episodes):
     # Initialize environment
@@ -267,8 +287,9 @@ for i_episode in range(num_episodes):
     # Track bought and sold prices
     bought = 0
     sold = 0
-    asset_status = 0.0
+    asset_status = 0
     fee = 0.00075
+    hold_time = 0
 
     for i, state in enumerate(train_env):
         
@@ -282,21 +303,39 @@ for i_episode in range(num_episodes):
 
         # View current state, select action
         action = select_action(state)
-        #print("Action: ", action)
+        print("\nAsset status: ", asset_status)
+        print("Action: ", action)
         if action == 0:
             bought = train_ask[i]
-            asset_status = 1
+            # Only allow us to buy when we're holding cash
+            if asset_status == 0:
+                reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee)
+                asset_status = 1
+            else:
+                asset_status = 1
+                reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee)
+
 
         if action == 2:
             sold = train_ask[i]
-            asset_status = 0
+            # Only allow us to sell when we're holding assets
+            if asset_status == 1:
+                reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee)
+                asset_status = 0
+            else:
+                asset_status = 0
+                reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee)
 
-        reward = reward_calc(action, asset_status, investment, bought, sold, fee)
+        
+        reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee)
         #print("reward: ", reward)
 
         memory.push(state, action, reward)
 
         optimize_model()
+
+        if asset_status == 0:
+            hold_time += 1
 
     if i % TARGET_UPDATE == 0:
         target_net.load_state_dict(policy_net.state_dict())
