@@ -84,7 +84,23 @@ class DQN(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         return self.fc3(x)
+'''
+# Other possible networks
+class DQN(nn.Module):
 
+    def __init__(self, in_dim, out_dim):
+        super(DQN, self).__init__()
+        self.fc1 = nn.Linear(in_dim, 500)
+        self.fc2 = nn.Linear(500, 300)
+        self.fc3 = nn.Linear(300, 100)
+        self.fc4 = nn.Linear(100, out_dim)
+
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        return self.fc4(x)
+'''
 #################################################################
 ### Data Pre-Processing | may put this in another file
 #################################################################
@@ -95,6 +111,7 @@ class DQN(nn.Module):
 # 2) env_value: a list of floats corresponding to the ask value at the current timestep
 # TODO: only list current timestep, not all
 def parse_data(path, train_length, params, period):
+    print("Processing data...")
     with open(path, 'r') as f:
         data = csv.reader(f)
         data = list(data)
@@ -129,6 +146,7 @@ def parse_data(path, train_length, params, period):
 
                 begin += 1
                 end += 1
+            print("{}% complete..".format(100*float(i)/period))
 
     train_environment = np.array(train_environment)
     train_environment = train_environment.astype(float)
@@ -151,36 +169,6 @@ def parse_data(path, train_length, params, period):
 ### Utilities | may put this in another file
 #################################################################
 
-BATCH_SIZE = 128
-GAMMA = 0.999
-EPS_START = 0.9
-EPS_END = 0.05
-EPS_DECAY = 500
-TARGET_UPDATE = 10
-
-data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/highres0.csv'
-train_period = 15  # Seconds between market checks
-train_length = 40
-train_params = ['bidVolume', 'ask', 'askVolume']
-n_actions = 3  # Buy, hold, sell
-mem_capacity = 10000
-
-extra_values = 1  # Asset status
-
-input_dimension = train_length*len(train_params) + extra_values
-output_dimension = n_actions
-
-policy_net = DQN(input_dimension, output_dimension).to(device)
-target_net = DQN(input_dimension, output_dimension).to(device)
-target_net.load_state_dict(policy_net.state_dict())
-target_net.eval()
-
-optimizer = optim.RMSprop(policy_net.parameters())
-
-memory = ReplayMemory(mem_capacity)
-
-total_steps = 0
-
 def select_action(state):
     global total_steps
     rand = random.random()
@@ -200,12 +188,12 @@ def select_action(state):
 def reward_calc(action, asset_status, investment, bought, sold, hold_time, fee):
 
     action = action.item()
-    print("Asset status: ", asset_status, ", action: ", action)
+    #print("Asset status: ", asset_status, ", action: ", action)
     scale = 100
     # Our money is still in our wallet
     if asset_status == 0:
         if action == 0:
-            print("Bought appropriately")
+            #print("\nBought appropriately at $", bought)
             reward = 0
         if action == 1:
             reward = 0
@@ -224,12 +212,23 @@ def reward_calc(action, asset_status, investment, bought, sold, hold_time, fee):
             reward = 0
 
         if action == 2:
-            print("Sold appropriately")
-            print("Invested $", investment, " at $", bought, ", sold at $", sold, " with fee = ", fee)
+            #print("Sold appropriately")
+            #print("Invested $", investment, " at $", bought, ", sold at $", sold, " with fee = ", fee)
             #print("*"*30)
-            
+
+            buy_cost = investment*fee
+            bought_shares = investment/bought
+            sold_revenue = bought_shares*sold
+            sold_cost = sold_revenue*fee
+
+            print("Gross {} with {} total fees | {}/{}".format(sold_revenue - investment, buy_cost+sold_cost, bought, sold))
+
             reward = investment*sold/bought - investment - investment*fee - investment*(sold/bought)*fee
-            print("reward = ", reward)
+            
+            # Increase reward for gains, keep the same for losses
+            #if reward > 0:
+            reward *= scale
+            print("Profit = $", reward/scale)
 
     return torch.tensor([reward]).type('torch.FloatTensor')
 
@@ -274,15 +273,47 @@ def optimize_model():
 ### Model training | may put this in another file
 #################################################################
 
+BATCH_SIZE = 128
+GAMMA = 0.999
+EPS_START = 0.9
+EPS_END = 0.05
+EPS_DECAY = 500
+TARGET_UPDATE = 10
 
-num_episodes = 10
+data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/crypto/highres.csv'
+train_period = 15  # Seconds between market checks
+train_length = 80
+train_params = ['bidVolume', 'ask', 'askVolume']
+n_actions = 3  # Buy, hold, sell
+mem_capacity = 10000
+
+# Initial investment, will be adjusted as we proceed
+investment = 1000
+
+extra_values = 1  # Asset status
+
+input_dimension = train_length*len(train_params) + extra_values
+output_dimension = n_actions
+
+policy_net = DQN(input_dimension, output_dimension).to(device)
+target_net = DQN(input_dimension, output_dimension).to(device)
+target_net.load_state_dict(policy_net.state_dict())
+target_net.eval()
+
+optimizer = optim.RMSprop(policy_net.parameters())
+
+memory = ReplayMemory(mem_capacity)
+
+total_steps = 0
+
+num_episodes = 50
+
+train_env, train_ask = parse_data(data_path, train_length, train_params, train_period)
 
 for i_episode in range(num_episodes):
     # Initialize environment
-    train_env, train_ask = parse_data(data_path, train_length, train_params, train_period)
     
-    # Initial investment, will be adjusted as we proceed
-    investment = 1000
+    train_length = len(train_env)
 
     # Track bought and sold prices
     bought = 0
@@ -290,10 +321,12 @@ for i_episode in range(num_episodes):
     asset_status = 0
     fee = 0.00075
     hold_time = 0
+    reward_track = 0
 
     for i, state in enumerate(train_env):
         
-
+        if i%(train_length/10) == 0:
+            print("\n\n\n\n\n\n{}% complete with episode {}/{}\n\n\n\n\n\n".format(float(i)/train_length, i_episode, num_episodes))
         #print("i ", i)
         #print(len(state))
         #print(train_ask[i])
@@ -303,13 +336,14 @@ for i_episode in range(num_episodes):
 
         # View current state, select action
         action = select_action(state)
-        print("\nAsset status: ", asset_status)
-        print("Action: ", action)
+        #print("\nAsset status: ", asset_status)
+        #print("Action: ", action)
         if action == 0:
             bought = train_ask[i]
             # Only allow us to buy when we're holding cash
             if asset_status == 0:
                 reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee)
+
                 asset_status = 1
             else:
                 asset_status = 1
@@ -321,6 +355,10 @@ for i_episode in range(num_episodes):
             # Only allow us to sell when we're holding assets
             if asset_status == 1:
                 reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee)
+                if reward > 0:
+                    reward_track += reward.item()/100
+                else:
+                    reward_track += reward.item()/100
                 asset_status = 0
             else:
                 asset_status = 0
@@ -340,6 +378,7 @@ for i_episode in range(num_episodes):
     if i % TARGET_UPDATE == 0:
         target_net.load_state_dict(policy_net.state_dict())
 
+    print("Net: $", reward_track)
 
     print(memory._len())
 
