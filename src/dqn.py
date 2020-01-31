@@ -25,6 +25,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from collections import namedtuple
 import csv
+from itertools import islice
 
 import torch
 import torch.nn as nn
@@ -38,7 +39,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Named tuple for storing transitions
 
 Transition = namedtuple('Transition',
-                        ('state', 'action', 'next_state', 'reward'))
+                        ('state', 'action', 'reward'))
 
 
 # Replay memory class
@@ -63,7 +64,7 @@ class ReplayMemory(object):
     def sample(self, batch_size):
         return random.sample(self.memory, batch_size)
 
-    def _lenSelf(self):
+    def _len(self):
         return len(self.memory)
 
 
@@ -164,7 +165,9 @@ train_params = ['time', 'bidVolume', 'ask', 'askVolume']
 n_actions = 3  # Buy, hold, sell
 mem_capacity = 10000
 
-input_dimension = train_length*len(train_params)
+extra_values = 1  # Asset status
+
+input_dimension = train_length*len(train_params) + extra_values
 output_dimension = n_actions
 
 policy_net = DQN(input_dimension, output_dimension).to(device)
@@ -219,19 +222,33 @@ def reward_calc(action, asset_status, investment, bought, sold, fee):
         if action == 2:
             reward = scale*((investment*sold - investment*sold*fee) - (investment*bought - investment*bought*fee))
 
-    return reward
+    return torch.tensor([reward]).type('torch.FloatTensor')
 
 #################################################################
 ### Model optimization | may put this in another file
 #################################################################
 
 def optimize_model():
-    if len(memory < BATCH_SIZE):
+    if memory._len() < BATCH_SIZE:
         return
 
     transitions = memory.sample(BATCH_SIZE)
-    batch = Transition()
+    print(transitions[0])
+    print(transitions[1])
+    batch = Transition(*zip(*transitions))
 
+    print("\n\n\n\n\n batch state ", batch.state[0])
+    batch_split = [BATCH_SIZE]*len(batch.state)
+    #state_batch = [list(islice(iter(batch.state, elem)) for elem in batch_split)]
+
+    #batch_state = 
+
+    state_batch = torch.cat(batch.state)
+    print(state_batch)
+    action_batch = torch.cat(batch.action)
+    reward_batch = torch.cat(batch.reward)
+
+    state_action_values = policy_net(state_batch).gather(1, action_batch)
 
 #################################################################
 ### Model training | may put this in another file
@@ -250,28 +267,42 @@ for i_episode in range(num_episodes):
     # Track bought and sold prices
     bought = 0
     sold = 0
-    asset_status = 0
+    asset_status = 0.0
     fee = 0.00075
 
     for i, state in enumerate(train_env):
-        print("i ", i)
-        print(len(state))
-        print(train_ask[i])
+        
 
+        #print("i ", i)
+        #print(len(state))
+        #print(train_ask[i])
+
+        # Add the current asset status to the state
+        state = torch.cat((state, torch.tensor([asset_status]).type('torch.FloatTensor')), 0)
+
+        # View current state, select action
         action = select_action(state)
-        print("action: ", action)
+        #print("Action: ", action)
         if action == 0:
             bought = train_ask[i]
             asset_status = 1
-            print("Bought at $", bought)
+
         if action == 2:
             sold = train_ask[i]
-            investment = investment + reward_calc(action, asset_status, investment, bought, sold, fee)
-            print("Sold at $", sold)
-    
+            asset_status = 0
+
+        reward = reward_calc(action, asset_status, investment, bought, sold, fee)
+        #print("reward: ", reward)
+
+        memory.push(state, action, reward)
+
+        optimize_model()
+
+    if i % TARGET_UPDATE == 0:
+        target_net.load_state_dict(policy_net.state_dict())
 
 
-    print("New total = ", investment)
+    print(memory._len())
 
 
 
