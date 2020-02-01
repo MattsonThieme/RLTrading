@@ -71,7 +71,7 @@ class ReplayMemory(object):
 #################################################################
 ### Q-Networks | may put this in another file
 #################################################################
-
+'''
 class DQN(nn.Module):
 
     def __init__(self, in_dim, out_dim):
@@ -100,7 +100,7 @@ class DQN(nn.Module):
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
         return self.fc4(x)
-'''
+
 #################################################################
 ### Data Pre-Processing | may put this in another file
 #################################################################
@@ -146,7 +146,7 @@ def parse_data(path, train_length, params, period):
 
                 begin += 1
                 end += 1
-            print("{}% complete..".format(100*float(i)/period))
+            print("{}% complete...".format(int(100*float(i)/period)))
 
     train_environment = np.array(train_environment)
     train_environment = train_environment.astype(float)
@@ -189,7 +189,7 @@ def reward_calc(action, asset_status, investment, bought, sold, hold_time, fee):
 
     action = action.item()
     #print("Asset status: ", asset_status, ", action: ", action)
-    scale = 100
+    scale = 1
     # Our money is still in our wallet
     if asset_status == 0:
         if action == 0:
@@ -221,14 +221,15 @@ def reward_calc(action, asset_status, investment, bought, sold, hold_time, fee):
             sold_revenue = bought_shares*sold
             sold_cost = sold_revenue*fee
 
-            print("Gross {} with {} total fees | {}/{}".format(sold_revenue - investment, buy_cost+sold_cost, bought, sold))
+            
 
             reward = investment*sold/bought - investment - investment*fee - investment*(sold/bought)*fee
             
             # Increase reward for gains, keep the same for losses
             #if reward > 0:
             reward *= scale
-            print("Profit = $", reward/scale)
+            print("$", reward/scale)
+            print("         Gross {} with {} total fees | {}/{}".format(sold_revenue - investment, buy_cost+sold_cost, bought, sold))
 
     return torch.tensor([reward]).type('torch.FloatTensor')
 
@@ -281,8 +282,11 @@ EPS_DECAY = 500
 TARGET_UPDATE = 10
 
 data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/crypto/highres.csv'
+
+minutes_back = 60 
+
 train_period = 15  # Seconds between market checks
-train_length = 80
+train_length = 240#minutes_back*60/train_period
 train_params = ['bidVolume', 'ask', 'askVolume']
 n_actions = 3  # Buy, hold, sell
 mem_capacity = 10000
@@ -290,7 +294,7 @@ mem_capacity = 10000
 # Initial investment, will be adjusted as we proceed
 investment = 1000
 
-extra_values = 1  # Asset status
+extra_values = 2  # Asset status, bought value
 
 input_dimension = train_length*len(train_params) + extra_values
 output_dimension = n_actions
@@ -306,7 +310,7 @@ memory = ReplayMemory(mem_capacity)
 
 total_steps = 0
 
-num_episodes = 50
+num_episodes = 3
 
 train_env, train_ask = parse_data(data_path, train_length, train_params, train_period)
 
@@ -314,6 +318,33 @@ for i_episode in range(num_episodes):
     # Initialize environment
     
     train_length = len(train_env)
+
+
+
+
+
+
+
+
+
+
+
+    ### Add bought price to the state
+    ### Add learning rate to optim
+    ### Figure out what param.grad.data.clamp_(-1,1) does
+    ### We're calculating reward on line 607 again, is this right? I think it isnt, because it overwrites the reward we just established in the "if 2" box
+
+
+
+
+
+
+
+
+
+
+
+
 
     # Track bought and sold prices
     bought = 0
@@ -325,47 +356,56 @@ for i_episode in range(num_episodes):
 
     for i, state in enumerate(train_env):
         
-        if i%(train_length/10) == 0:
-            print("\n\n\n\n\n\n{}% complete with episode {}/{}\n\n\n\n\n\n".format(float(i)/train_length, i_episode, num_episodes))
-        #print("i ", i)
-        #print(len(state))
-        #print(train_ask[i])
+        if i%(int(train_length/10)) == 0:
+            print("\n\n\n\n\n\n")
+            print("#"*60)
+            print("{}% complete with episode {}/{}".format(int(100*float(i)/train_length), i_episode, num_episodes))
+            print("#"*60)
+            print("\n\n\n\n\n\n")
 
-        # Add the current asset status to the state
+
+        # Add the current asset status and bought value to the state to the state
         state = torch.cat((state, torch.tensor([asset_status]).type('torch.FloatTensor')), 0)
+        state = torch.cat((state, torch.tensor([bought]).type('torch.FloatTensor')), 0)
 
         # View current state, select action
         action = select_action(state)
-        #print("\nAsset status: ", asset_status)
-        #print("Action: ", action)
+
         if action == 0:
             bought = train_ask[i]
             # Only allow us to buy when we're holding cash
             if asset_status == 0:
-                reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee)
+                reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, scale)
 
                 asset_status = 1
             else:
                 asset_status = 1
-                reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee)
+                reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, scale)
 
 
         if action == 2:
+
+
+            print("i = ", i)
+
             sold = train_ask[i]
             # Only allow us to sell when we're holding assets
             if asset_status == 1:
-                reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee)
+                reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, scale)
                 if reward > 0:
-                    reward_track += reward.item()/100
+                    reward_track += reward.item()/scale
                 else:
-                    reward_track += reward.item()/100
+                    reward_track += reward.item()/scale
                 asset_status = 0
             else:
                 asset_status = 0
-                reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee)
+                reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, scale)
+
+            bought = 0
 
         
-        reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee)
+
+        reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, scale)
         #print("reward: ", reward)
 
         memory.push(state, action, reward)
