@@ -157,12 +157,6 @@ def parse_data(path, train_length, params, period):
     env_value = np.array(env_value)
     env_value = env_value.astype(float)
 
-    #print(len(train_environment[1]))
-    #print(train_environment[0])
-    #print(env_value[0])
-    #print(train_environment[1])
-    #print(train_environment[2])
-
     return train_environment, env_value
 
 #################################################################
@@ -185,11 +179,11 @@ def select_action(state):
 
 # Incentivize legal/illegal moves appropriately
 # Actions: {0:buy, 1:hold, 2:sell}
-def reward_calc(action, asset_status, investment, bought, sold, hold_time, fee):
+def reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, scale):
 
     action = action.item()
     #print("Asset status: ", asset_status, ", action: ", action)
-    scale = 1
+
     # Our money is still in our wallet
     if asset_status == 0:
         if action == 0:
@@ -199,15 +193,16 @@ def reward_calc(action, asset_status, investment, bought, sold, hold_time, fee):
             reward = 0
         # Can't sell assets we don't have
         if action == 2:
-            #print("Whoops, can't sell assets we don't have")
+            print("        Whoops, can't sell assets we don't have")
             reward = -100
 
     # Our money is out in the asset
     if asset_status == 1:
         # Can't buy assets without any cash
         if action == 0:
-            #print("Whoops, can't buy assets without cash")
+            print("        Whoops, can't buy assets without cash")
             reward = -100
+
         if action == 1:
             reward = 0
 
@@ -281,7 +276,7 @@ EPS_END = 0.05
 EPS_DECAY = 500
 TARGET_UPDATE = 10
 
-data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/crypto/highres.csv'
+data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/crypto/highres3days.csv'
 
 minutes_back = 60 
 
@@ -295,6 +290,8 @@ mem_capacity = 10000
 investment = 1000
 
 extra_values = 2  # Asset status, bought value
+
+scale = 1  # Scale reward values
 
 input_dimension = train_length*len(train_params) + extra_values
 output_dimension = n_actions
@@ -312,7 +309,22 @@ total_steps = 0
 
 num_episodes = 3
 
-train_env, train_ask = parse_data(data_path, train_length, train_params, train_period)
+
+
+#train_env, train_ask = parse_data(data_path, train_length, train_params, train_period)
+#train_env = np.load('highres13hrs_env.npy')
+#train_ask = np.load('highres13hrs_ask.npy')
+
+#torch.save(train_env, 'highres3days_env.pt')
+#torch.save(train_ask, 'highres3days_ask.pt')
+
+
+train_env = torch.load('highres3days_env.pt')
+train_ask = torch.load('highres3days_ask.pt')
+
+#train_env = torch.load('highres13hrs_env.pt')
+#train_ask = torch.load('highres13hrs_ask.pt')
+
 
 for i_episode in range(num_episodes):
     # Initialize environment
@@ -328,8 +340,7 @@ for i_episode in range(num_episodes):
 
 
 
-
-    ### Add bought price to the state
+    ### Why do we appear to get the "cant buy assets without cash" when asset_status = 0? need better logging
     ### Add learning rate to optim
     ### Figure out what param.grad.data.clamp_(-1,1) does
     ### We're calculating reward on line 607 again, is this right? I think it isnt, because it overwrites the reward we just established in the "if 2" box
@@ -371,10 +382,12 @@ for i_episode in range(num_episodes):
         # View current state, select action
         action = select_action(state)
 
+        ## Buy
         if action == 0:
-            bought = train_ask[i]
+            
             # Only allow us to buy when we're holding cash
             if asset_status == 0:
+                bought = train_ask[i]
                 reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, scale)
 
                 asset_status = 1
@@ -382,11 +395,14 @@ for i_episode in range(num_episodes):
                 asset_status = 1
                 reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, scale)
 
+        ## Hold
+        if action == 1:
+            reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, scale)
 
+        ## Sell
         if action == 2:
 
-
-            print("i = ", i)
+            print("        i = ", i, " asset status: ", asset_status)
 
             sold = train_ask[i]
             # Only allow us to sell when we're holding assets
@@ -396,6 +412,7 @@ for i_episode in range(num_episodes):
                     reward_track += reward.item()/scale
                 else:
                     reward_track += reward.item()/scale
+
                 asset_status = 0
             else:
                 asset_status = 0
@@ -405,10 +422,11 @@ for i_episode in range(num_episodes):
 
         
 
-        reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, scale)
+        
         #print("reward: ", reward)
 
         memory.push(state, action, reward)
+
 
         optimize_model()
 
