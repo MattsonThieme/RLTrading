@@ -187,27 +187,29 @@ def reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, 
     # Our money is still in our wallet
     if asset_status == 0:
         if action == 0:
-            #print("\nBought appropriately at $", bought)
+            print("\n\nBought appropriately at ${}".format(bought))
             reward = 0
         if action == 1:
+            #print("Hold")
             reward = 0
         # Can't sell assets we don't have
         if action == 2:
-            print("        Whoops, can't sell assets we don't have")
+            #print("Whoops, can't sell assets we don't have")
             reward = -100
 
     # Our money is out in the asset
     if asset_status == 1:
         # Can't buy assets without any cash
         if action == 0:
-            print("        Whoops, can't buy assets without cash")
+            #print("Whoops, can't buy assets without cash")
             reward = -100
 
         if action == 1:
+            #print("Hold")
             reward = 0
 
         if action == 2:
-            #print("Sold appropriately")
+            print("Sold appropriately at ${} after {} steps".format(sold, hold_time))
             #print("Invested $", investment, " at $", bought, ", sold at $", sold, " with fee = ", fee)
             #print("*"*30)
 
@@ -280,8 +282,8 @@ data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/d
 
 minutes_back = 60 
 
-train_period = 15  # Seconds between market checks
-train_length = 240#minutes_back*60/train_period
+train_period = 5  # Seconds between market checks
+train_length = 360 #minutes_back*60/train_period
 train_params = ['bidVolume', 'ask', 'askVolume']
 n_actions = 3  # Buy, hold, sell
 mem_capacity = 10000
@@ -289,7 +291,7 @@ mem_capacity = 10000
 # Initial investment, will be adjusted as we proceed
 investment = 1000
 
-extra_values = 2  # Asset status, bought value
+extra_values = 3  # Asset status, bought value, hold_time
 
 scale = 1  # Scale reward values
 
@@ -315,12 +317,12 @@ num_episodes = 3
 #train_env = np.load('highres13hrs_env.npy')
 #train_ask = np.load('highres13hrs_ask.npy')
 
-#torch.save(train_env, 'highres3days_env.pt')
-#torch.save(train_ask, 'highres3days_ask.pt')
+#torch.save(train_env, 'highres3days_p5s_l30m_env.pt')
+#torch.save(train_ask, 'highres3days_p5s_l30m_ask.pt')
 
 
-train_env = torch.load('highres3days_env.pt')
-train_ask = torch.load('highres3days_ask.pt')
+train_env = torch.load('highres3days_p5s_l30m_env.pt')
+train_ask = torch.load('highres3days_p5s_l30m_ask.pt')
 
 #train_env = torch.load('highres13hrs_env.pt')
 #train_ask = torch.load('highres13hrs_ask.pt')
@@ -332,28 +334,11 @@ for i_episode in range(num_episodes):
     train_length = len(train_env)
 
 
-
-
-
-
-
-
-
-
-    ### Why do we appear to get the "cant buy assets without cash" when asset_status = 0? need better logging
+    ### Try other periods
+    ### What do most successful trades look like? How long do we wait? 
+    ### Consider adding a requirement that the trade makes money
     ### Add learning rate to optim
     ### Figure out what param.grad.data.clamp_(-1,1) does
-    ### We're calculating reward on line 607 again, is this right? I think it isnt, because it overwrites the reward we just established in the "if 2" box
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -365,7 +350,21 @@ for i_episode in range(num_episodes):
     hold_time = 0
     reward_track = 0
 
+    rolling_track = 20
+
+    profits = []
+    losses = []
+
     for i, state in enumerate(train_env):
+
+        if (len(profits)%rolling_track) == 0 and len(profits) > 0:
+            print("\n\n\n\n")
+            print("Last {} trades:".format(len(profits) + len(losses)))
+            print("   {} gains, avg: ${}".format(len(profits), sum(profits)/len(losses)))
+            print("   {} losses, avg: ${}".format(len(losses), sum(losses)/len(losses)))
+            print("\n\n\n\n")
+            profits = []
+            losses = []
         
         if i%(int(train_length/10)) == 0:
             print("\n\n\n\n\n\n")
@@ -378,9 +377,12 @@ for i_episode in range(num_episodes):
         # Add the current asset status and bought value to the state to the state
         state = torch.cat((state, torch.tensor([asset_status]).type('torch.FloatTensor')), 0)
         state = torch.cat((state, torch.tensor([bought]).type('torch.FloatTensor')), 0)
+        state = torch.cat((state, torch.tensor([hold_time]).type('torch.FloatTensor')), 0)
 
         # View current state, select action
         action = select_action(state)
+
+        #print("\n\nAsset status: {}, bought: {}, ask:{}, hold_time: {}, action: {}".format(asset_status, bought, train_ask[i], hold_time, action))
 
         ## Buy
         if action == 0:
@@ -391,18 +393,18 @@ for i_episode in range(num_episodes):
                 reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, scale)
 
                 asset_status = 1
+                hold_time = 0
             else:
                 asset_status = 1
                 reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, scale)
 
         ## Hold
         if action == 1:
+            hold_time += 1
             reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, scale)
 
         ## Sell
         if action == 2:
-
-            print("        i = ", i, " asset status: ", asset_status)
 
             sold = train_ask[i]
             # Only allow us to sell when we're holding assets
@@ -410,9 +412,12 @@ for i_episode in range(num_episodes):
                 reward = reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, scale)
                 if reward > 0:
                     reward_track += reward.item()/scale
+                    profits.append(reward.item()/scale)
                 else:
                     reward_track += reward.item()/scale
+                    losses.append(reward.item()/scale)
 
+                hold_time = 0
                 asset_status = 0
             else:
                 asset_status = 0
@@ -420,7 +425,8 @@ for i_episode in range(num_episodes):
 
             bought = 0
 
-        
+
+
 
         
         #print("reward: ", reward)
@@ -430,8 +436,6 @@ for i_episode in range(num_episodes):
 
         optimize_model()
 
-        if asset_status == 0:
-            hold_time += 1
 
     if i % TARGET_UPDATE == 0:
         target_net.load_state_dict(policy_net.state_dict())
