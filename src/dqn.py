@@ -100,6 +100,10 @@ class DQN(nn.Module):
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
         return self.fc4(x)
+'''
+class DQN(nn.Module):
+    def __init__(self, in_dim, out_dim):
+'''
 
 #################################################################
 ### Data Pre-Processing | may put this in another file
@@ -248,9 +252,9 @@ def optimize_model():
         batch_action.append(trans.action[0])
         batch_reward.append(trans.reward[0])
 
-    batch_state = torch.stack(batch_state)
-    batch_action = torch.stack(batch_action)
-    batch_reward = torch.stack(batch_reward)
+    batch_state = torch.stack(batch_state).to(device)
+    batch_action = torch.stack(batch_action).to(device)
+    batch_reward = torch.stack(batch_reward).to(device)
     #print("\n\n\nbs shape: ", batch_state.size())
     #print("ba shape: ", batch_action[0][0])#).size())
     #print("br shape: ", batch_reward.size())
@@ -282,8 +286,8 @@ data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/d
 
 minutes_back = 60 
 
-train_period = 5  # Seconds between market checks
-train_length = 360 #minutes_back*60/train_period
+train_period = 15  # Seconds between market checks
+train_length = 240 #minutes_back*60/train_period
 train_params = ['bidVolume', 'ask', 'askVolume']
 n_actions = 3  # Buy, hold, sell
 mem_capacity = 10000
@@ -321,8 +325,8 @@ num_episodes = 3
 #torch.save(train_ask, 'highres3days_p5s_l30m_ask.pt')
 
 
-train_env = torch.load('highres3days_p5s_l30m_env.pt')
-train_ask = torch.load('highres3days_p5s_l30m_ask.pt')
+train_env = torch.load('highres3days_env.pt')
+train_ask = torch.load('highres3days_ask.pt')
 
 #train_env = torch.load('highres13hrs_env.pt')
 #train_ask = torch.load('highres13hrs_ask.pt')
@@ -377,7 +381,7 @@ for i_episode in range(num_episodes):
         # Add the current asset status and bought value to the state to the state
         state = torch.cat((state, torch.tensor([asset_status]).type('torch.FloatTensor')), 0)
         state = torch.cat((state, torch.tensor([bought]).type('torch.FloatTensor')), 0)
-        state = torch.cat((state, torch.tensor([hold_time]).type('torch.FloatTensor')), 0)
+        state = torch.cat((state, torch.tensor([hold_time]).type('torch.FloatTensor')), 0).to(device)
 
         # View current state, select action
         action = select_action(state)
