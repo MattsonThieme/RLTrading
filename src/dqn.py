@@ -325,7 +325,7 @@ GAMMA = 0.999
 EPS_START = 0.9
 EPS_END = 0.05
 EPS_DECAY = 500
-TARGET_UPDATE = 10
+TARGET_UPDATE = 50
 
 data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/crypto/ETC/ETC_1s_0.csv'
 
