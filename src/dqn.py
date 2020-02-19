@@ -39,7 +39,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Named tuple for storing transitions
 
 Transition = namedtuple('Transition',
-                        ('state', 'action', 'reward'))
+                        ('state', 'action', 'reward', 'target', 'next_action'))
 
 
 # Replay memory class
@@ -85,6 +85,7 @@ class DQN(nn.Module):
         x = F.relu(self.fc2(x))
         return self.fc3(x)
 '''
+
 # Other possible networks
 class DQN(nn.Module):
 
@@ -100,10 +101,40 @@ class DQN(nn.Module):
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
         return self.fc4(x)
-'''
-class DQN(nn.Module):
-    def __init__(self, in_dim, out_dim):
-'''
+
+class LSTM(nn.Module):
+
+    def __init__(self, input_dim, hidden_dim, batch_size, output_dim=3,
+                    num_layers=2):
+        super(LSTM, self).__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.batch_size = batch_size
+        self.num_layers = num_layers
+
+        # Define the LSTM layer
+        self.lstm = nn.LSTM(self.input_dim, self.hidden_dim, self.num_layers)
+
+        # Define the output layer
+        self.linear = nn.Linear(self.hidden_dim, output_dim)
+
+    def init_hidden(self):
+        # This is what we'll initialise our hidden state as
+        return (torch.zeros(self.num_layers, self.batch_size, self.hidden_dim),
+                torch.zeros(self.num_layers, self.batch_size, self.hidden_dim))
+
+    def forward(self, input):
+        # Forward pass through LSTM layer
+        # shape of lstm_out: [input_size, batch_size, hidden_dim]
+        # shape of self.hidden: (a, b), where a and b both 
+        # have shape (num_layers, batch_size, hidden_dim).
+        lstm_out, self.hidden = self.lstm(input.view(len(input), self.batch_size, -1))
+        
+        # Only take the output from the final timetep
+        # Can pass on the entirety of lstm_out to the next layer if it is a seq2seq prediction
+        y_pred = self.linear(lstm_out[-1].view(self.batch_size, -1))
+        return y_pred.view(-1)
+
 
 #################################################################
 ### Data Pre-Processing | may put this in another file
@@ -191,7 +222,7 @@ def reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, 
     # Our money is still in our wallet
     if asset_status == 0:
         if action == 0:
-            print("\n\nBought appropriately at ${}".format(bought))
+            #print("\n\nBought appropriately at ${}".format(bought))
             reward = 0
         if action == 1:
             #print("Hold")
@@ -213,7 +244,7 @@ def reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, 
             reward = 0
 
         if action == 2:
-            print("Sold appropriately at ${} after {} steps".format(sold, hold_time))
+            #print("Sold appropriately at ${} after {} steps".format(sold, hold_time))
             #print("Invested $", investment, " at $", bought, ", sold at $", sold, " with fee = ", fee)
             #print("*"*30)
 
@@ -222,15 +253,13 @@ def reward_calc(action, asset_status, investment, bought, sold, hold_time, fee, 
             sold_revenue = bought_shares*sold
             sold_cost = sold_revenue*fee
 
-            
-
             reward = investment*sold/bought - investment - investment*fee - investment*(sold/bought)*fee
             
             # Increase reward for gains, keep the same for losses
             #if reward > 0:
             reward *= scale
-            print("$", reward/scale)
-            print("         Gross {} with {} total fees | {}/{}".format(sold_revenue - investment, buy_cost+sold_cost, bought, sold))
+            #print("$", reward/scale)
+            #print("         Gross {} with {} total fees | {}/{}".format(sold_revenue - investment, buy_cost+sold_cost, bought, sold))
 
     return torch.tensor([reward]).type('torch.FloatTensor')
 
@@ -247,27 +276,43 @@ def optimize_model():
     batch_state = []
     batch_action = []
     batch_reward = []
+    batch_target = []
+    batch_next_action = []
     for i, trans in enumerate(transitions):
         batch_state.append(trans.state)
         batch_action.append(trans.action[0])
         batch_reward.append(trans.reward[0])
+        batch_target.append(trans.target[0])
+        batch_next_action.append(trans.next_action[0])
 
     batch_state = torch.stack(batch_state).to(device)
     batch_action = torch.stack(batch_action).to(device)
     batch_reward = torch.stack(batch_reward).to(device)
-    #print("\n\n\nbs shape: ", batch_state.size())
-    #print("ba shape: ", batch_action[0][0])#).size())
-    #print("br shape: ", batch_reward.size())
+    batch_target = torch.stack(batch_target).to(device)
+    batch_next_action = torch.stack(batch_next_action).to(device)
+
+    # Add target here
+
+    
 
     state_action_values = policy_net(batch_state).gather(1, batch_action)
-    #print("SAV :", state_action_values.size())
 
-    loss = F.smooth_l1_loss(state_action_values, batch_reward.unsqueeze(1))
+    expected_state_action_values = batch_next_action
+    expected_state_action_values = (batch_next_action[0]*GAMMA) + batch_reward
+
+    #print("State action values: \n")
+    #print(state_action_values)
+
+    #print("\n Batch_reward: \n")
+    #print(expected_state_action_values.unsqueeze(1))
+
+    #loss = F.smooth_l1_loss(state_action_values, batch_reward.unsqueeze(1))
+    loss = F.smooth_l1_loss(state_action_values, expected_state_action_values)
 
     optimizer.zero_grad()
     loss.backward()
-    #for param in policy_net.parameters():
-    #    param.grad.data.clamp_(-1,1)
+    for param in policy_net.parameters():
+        param.grad.data.clamp_(-1,1)
     optimizer.step()
 
 
@@ -282,13 +327,13 @@ EPS_END = 0.05
 EPS_DECAY = 500
 TARGET_UPDATE = 10
 
-data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/crypto/highres3days.csv'
+data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/crypto/ETC/ETC_1s_0.csv'
 
 minutes_back = 60 
 
 train_period = 15  # Seconds between market checks
 train_length = 240 #minutes_back*60/train_period
-train_params = ['bidVolume', 'ask', 'askVolume']
+train_params = ['ask']
 n_actions = 3  # Buy, hold, sell
 mem_capacity = 10000
 
@@ -304,6 +349,10 @@ output_dimension = n_actions
 
 policy_net = DQN(input_dimension, output_dimension).to(device)
 target_net = DQN(input_dimension, output_dimension).to(device)
+#policy_net = LSTM(1, 500, batch_size=1, output_dim=output_dimension, num_layers=2).to(device)
+#target_net = LSTM(1, 500, batch_size=1, output_dim=output_dimension, num_layers=2).to(device)
+
+
 target_net.load_state_dict(policy_net.state_dict())
 target_net.eval()
 
@@ -321,15 +370,15 @@ num_episodes = 3
 #train_env = np.load('highres13hrs_env.npy')
 #train_ask = np.load('highres13hrs_ask.npy')
 
-#torch.save(train_env, 'highres3days_p5s_l30m_env.pt')
-#torch.save(train_ask, 'highres3days_p5s_l30m_ask.pt')
+#torch.save(train_env, 'highres3days_askonly_p15s_l60m_env.pt')
+#torch.save(train_ask, 'highres3days_askonly_p15s_l60m_ask.pt')
 
 
-train_env = torch.load('highres3days_env.pt')
-train_ask = torch.load('highres3days_ask.pt')
+#train_env = torch.load('highres3days_p15s_l60m_env.pt')
+#train_ask = torch.load('highres3days_p15s_l60m_ask.pt')
 
-#train_env = torch.load('highres13hrs_env.pt')
-#train_ask = torch.load('highres13hrs_ask.pt')
+train_env = torch.load('highres3days_askonly_p15s_l60m_env.pt')
+train_ask = torch.load('highres3days_askonly_p15s_l60m_ask.pt')
 
 
 for i_episode in range(num_episodes):
@@ -339,6 +388,8 @@ for i_episode in range(num_episodes):
 
 
     ### Try other periods
+    ### Try an LSTM 
+    ### Try having the LSTM predict whether the next step will be up or down, need a new dataset
     ### What do most successful trades look like? How long do we wait? 
     ### Consider adding a requirement that the trade makes money
     ### Add learning rate to optim
@@ -350,9 +401,10 @@ for i_episode in range(num_episodes):
     bought = 0
     sold = 0
     asset_status = 0
-    fee = 0.00075
+    fee = 0.0 #0.00075
     hold_time = 0
     reward_track = 0
+    episode_profit = 0
 
     rolling_track = 20
 
@@ -362,10 +414,13 @@ for i_episode in range(num_episodes):
     for i, state in enumerate(train_env):
 
         if (len(profits)%rolling_track) == 0 and len(profits) > 0:
-            print("\n\n\n\n")
+            print("\n\n")
             print("Last {} trades:".format(len(profits) + len(losses)))
             print("   {} gains, avg: ${}".format(len(profits), sum(profits)/len(losses)))
             print("   {} losses, avg: ${}".format(len(losses), sum(losses)/len(losses)))
+            print("   Net: ${}".format(sum(profits) + sum(losses)))  # Losses already negative
+            episode_profit += sum(profits) + sum(losses)
+            print("   Episode Net: ${}".format(episode_profit))
             print("\n\n\n\n")
             profits = []
             losses = []
@@ -377,6 +432,7 @@ for i_episode in range(num_episodes):
             print("#"*60)
             print("\n\n\n\n\n\n")
 
+        orig_state = state
 
         # Add the current asset status and bought value to the state to the state
         state = torch.cat((state, torch.tensor([asset_status]).type('torch.FloatTensor')), 0)
@@ -429,13 +485,18 @@ for i_episode in range(num_episodes):
 
             bought = 0
 
+        # Add the current asset status and bought value to the state to the state
+        target = torch.cat((orig_state, torch.tensor([asset_status]).type('torch.FloatTensor')), 0)
+        target = torch.cat((target, torch.tensor([bought]).type('torch.FloatTensor')), 0)
+        target = torch.cat((target, torch.tensor([hold_time]).type('torch.FloatTensor')), 0).to(device)
 
+        next_action = 0
+        next_reward = 0
+        with torch.no_grad():
+            next_action = target_net(target).max(0)[1].view(1,1)
+            next_reward = reward_calc(next_action, asset_status, investment, bought, sold, hold_time, fee, scale)
 
-
-        
-        #print("reward: ", reward)
-
-        memory.push(state, action, reward)
+        memory.push(state, action, reward, target, next_reward)
 
 
         optimize_model()
@@ -447,6 +508,8 @@ for i_episode in range(num_episodes):
     print("Net: $", reward_track)
 
     print(memory._len())
+
+    torch.save(policy_net.state_dict(),"saved_policy_{}_{}.pt")
 
 
 
@@ -498,8 +561,8 @@ with open(data_path, 'r') as f:
     vwap = []
 
     for row in data:
-        time.append(float(row[0])/60)
-        to_plot.append(float(row[6]))
+        time.append(float(row[0]))
+        to_plot.append(float(row[5]))
         av.append(float(row[7]))
 
 
@@ -520,8 +583,8 @@ with open(data_path, 'r') as f:
 
     fig.tight_layout()  # otherwise the right y-label is slightly clipped
     plt.show()
-'''      
-
+     
+''' 
 
 
 
