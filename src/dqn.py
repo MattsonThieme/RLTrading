@@ -325,9 +325,9 @@ GAMMA = 0.999
 EPS_START = 0.9
 EPS_END = 0.05
 EPS_DECAY = 500
-TARGET_UPDATE = 50
+TARGET_UPDATE = 100
 
-data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/crypto/ETC/ETC_1s_0.csv'
+data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/crypto/ETH/ETH_1s_4.csv'
 
 minutes_back = 60 
 
@@ -362,7 +362,7 @@ memory = ReplayMemory(mem_capacity)
 
 total_steps = 0
 
-num_episodes = 3
+num_episodes = 1
 
 
 
@@ -370,15 +370,15 @@ num_episodes = 3
 #train_env = np.load('highres13hrs_env.npy')
 #train_ask = np.load('highres13hrs_ask.npy')
 
-#torch.save(train_env, 'highres3days_askonly_p15s_l60m_env.pt')
-#torch.save(train_ask, 'highres3days_askonly_p15s_l60m_ask.pt')
+#torch.save(train_env, 'ETH_ask_p15s_l60m_env.pt')
+#torch.save(train_ask, 'ETH_ask_p15s_l60m_ask.pt')
 
 
 #train_env = torch.load('highres3days_p15s_l60m_env.pt')
 #train_ask = torch.load('highres3days_p15s_l60m_ask.pt')
 
-train_env = torch.load('highres3days_askonly_p15s_l60m_env.pt')
-train_ask = torch.load('highres3days_askonly_p15s_l60m_ask.pt')
+train_env = torch.load('ETH_ask_p15s_l60m_env.pt')
+train_ask = torch.load('ETH_ask_p15s_l60m_ask.pt')
 
 
 for i_episode in range(num_episodes):
@@ -406,6 +406,10 @@ for i_episode in range(num_episodes):
     reward_track = 0
     episode_profit = 0
 
+    market_start = train_ask[0]
+    session_start = 0
+    start_ask = train_ask[0]
+
     rolling_track = 20
 
     profits = []
@@ -415,13 +419,16 @@ for i_episode in range(num_episodes):
 
         if (len(profits)%rolling_track) == 0 and len(profits) > 0:
             print("\n\n")
-            print("Last {} trades:".format(len(profits) + len(losses)))
+            print("Market moved: ${} (initial: {}, current{})".format(train_ask[i] - market_start, start_ask, train_ask[i]))
+            market_start = train_ask[i]
+            print("Last {} trades in {} minutes:".format(len(profits) + len(losses), train_period*(i - session_start)/60))
+            session_start = i
             print("   {} gains, avg: ${}".format(len(profits), sum(profits)/len(losses)))
             print("   {} losses, avg: ${}".format(len(losses), sum(losses)/len(losses)))
             print("   Net: ${}".format(sum(profits) + sum(losses)))  # Losses already negative
             episode_profit += sum(profits) + sum(losses)
             print("   Episode Net: ${}".format(episode_profit))
-            print("\n\n\n\n")
+            print("\n\n")
             profits = []
             losses = []
         
@@ -431,8 +438,6 @@ for i_episode in range(num_episodes):
             print("{}% complete with episode {}/{}".format(int(100*float(i)/train_length), i_episode, num_episodes))
             print("#"*60)
             print("\n\n\n\n\n\n")
-
-        orig_state = state
 
         # Add the current asset status and bought value to the state to the state
         state = torch.cat((state, torch.tensor([asset_status]).type('torch.FloatTensor')), 0)
@@ -485,8 +490,9 @@ for i_episode in range(num_episodes):
 
             bought = 0
 
+        target = train_env[i+1]
         # Add the current asset status and bought value to the state to the state
-        target = torch.cat((orig_state, torch.tensor([asset_status]).type('torch.FloatTensor')), 0)
+        target = torch.cat((target, torch.tensor([asset_status]).type('torch.FloatTensor')), 0)
         target = torch.cat((target, torch.tensor([bought]).type('torch.FloatTensor')), 0)
         target = torch.cat((target, torch.tensor([hold_time]).type('torch.FloatTensor')), 0).to(device)
 
