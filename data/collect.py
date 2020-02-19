@@ -11,7 +11,7 @@ symbols = [i+'/USDT' for i in assets]
 data = exchange.fetch_tickers(symbols)
 params = ['ask']
 
-target = 1  # delay target
+target = 5  # delay target
 
 with open('{}_{}s.csv'.format("-".join(assets), target), 'w') as r:
     reader = csv.reader(r)
