@@ -21,6 +21,7 @@ Visualize learning
 
 import math
 import random
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import namedtuple
@@ -101,6 +102,48 @@ class DQN(nn.Module):
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
         return self.fc4(x)
+
+class CNN(nn.Module):
+    def __init__(self, n_in, n_hid, n_out, do_prob=0.):
+        super(CNN, self).__init__()
+        self.pool = nn.MaxPool1d(kernel_size=2, stride=None, padding=0,
+                                 dilation=1, return_indices=False,
+                                 ceil_mode=False)
+
+        self.conv1 = nn.Conv1d(n_in, n_hid, kernel_size=5, stride=1, padding=0)
+        self.bn1 = nn.BatchNorm1d(n_hid)
+        self.conv2 = nn.Conv1d(n_hid, n_hid, kernel_size=5, stride=1, padding=0)
+        self.bn2 = nn.BatchNorm1d(n_hid)
+        self.conv_predict = nn.Conv1d(n_hid, n_out, kernel_size=1)
+        #self.conv_attention = nn.Conv1d(n_hid, 1, kernel_size=1)
+        self.dropout_prob = do_prob
+
+        self.init_weights()
+
+    def init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                n = m.kernel_size[0] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+                m.bias.data.fill_(0.1)
+            elif isinstance(m, nn.BatchNorm1d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+
+    def forward(self, inputs):
+        # Input shape: [num_sims * num_edges, num_dims, num_timesteps]
+
+        x = F.relu(self.conv1(inputs))
+        x = self.bn1(x)
+        x = F.dropout(x, self.dropout_prob, training=self.training)
+        x = self.pool(x)
+        x = F.relu(self.conv2(x))
+        x = self.bn2(x)
+        pred = self.conv_predict(x)
+        #attention = my_softmax(self.conv_attention(x), axis=2)
+
+        #edge_prob = (pred * attention).mean(dim=2)
+        return pred
 
 class LSTM(nn.Module):
 
@@ -208,7 +251,7 @@ def select_action(state):
         with torch.no_grad():
             return policy_net(state).max(0)[1].view(1,1)  # Returns the index of the maximum output in a 1x1 tensor
     else:
-        #print("Chose randomly...")
+        #print("Chose randomly ({})...".format(epsilon_threshold))
         return torch.tensor([[random.randrange(n_actions)]], device=device, dtype=torch.long)
 
 
@@ -323,9 +366,9 @@ def optimize_model():
 BATCH_SIZE = 128
 GAMMA = 0.999
 EPS_START = 0.9
-EPS_END = 0.05
-EPS_DECAY = 500
-TARGET_UPDATE = 100
+EPS_END = 0.001
+EPS_DECAY = 5000
+TARGET_UPDATE = 80
 
 data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/crypto/ETH/ETH_1s_4.csv'
 
@@ -349,6 +392,8 @@ output_dimension = n_actions
 
 policy_net = DQN(input_dimension, output_dimension).to(device)
 target_net = DQN(input_dimension, output_dimension).to(device)
+#policy_net = CNN(1, 128, output_dimension, do_prob=0.).to(device)
+#target_net = CNN(1, 128, output_dimension, do_prob=0.).to(device)
 #policy_net = LSTM(1, 500, batch_size=1, output_dim=output_dimension, num_layers=2).to(device)
 #target_net = LSTM(1, 500, batch_size=1, output_dim=output_dimension, num_layers=2).to(device)
 
@@ -357,6 +402,7 @@ target_net.load_state_dict(policy_net.state_dict())
 target_net.eval()
 
 optimizer = optim.RMSprop(policy_net.parameters())
+#optimizer = optim.Adam(policy_net.parameters(), lr=0.001)
 
 memory = ReplayMemory(mem_capacity)
 
@@ -370,8 +416,8 @@ num_episodes = 1
 #train_env = np.load('highres13hrs_env.npy')
 #train_ask = np.load('highres13hrs_ask.npy')
 
-#torch.save(train_env, 'ETH_ask_p15s_l60m_env.pt')
-#torch.save(train_ask, 'ETH_ask_p15s_l60m_ask.pt')
+#torch.save(train_env, 'ETH_ask_p15s_l10m_env.pt')
+#torch.save(train_ask, 'ETH_ask_p15s_l10m_ask.pt')
 
 
 #train_env = torch.load('highres3days_p15s_l60m_env.pt')
@@ -381,10 +427,18 @@ train_env = torch.load('ETH_ask_p15s_l60m_env.pt')
 train_ask = torch.load('ETH_ask_p15s_l60m_ask.pt')
 
 
+# Normalize train_env [-1,1]
+train_env = (train_env - train_ask.mean().item())/(max(train_ask) - min(train_ask))
+
+
+print(train_env)
+#print(max(train_ask))
+#print(train_env/max(train_ask))
+
 for i_episode in range(num_episodes):
     # Initialize environment
     
-    train_length = len(train_env)
+    train_size = len(train_env)
 
 
     ### Try other periods
@@ -405,6 +459,7 @@ for i_episode in range(num_episodes):
     hold_time = 0
     reward_track = 0
     episode_profit = 0
+    target_update_counter = 0
 
     market_start = train_ask[0]
     session_start = 0
@@ -415,27 +470,28 @@ for i_episode in range(num_episodes):
     profits = []
     losses = []
 
-    for i, state in enumerate(train_env):
+    for i, state in enumerate(train_env[:train_size-1]):
 
         if (len(profits)%rolling_track) == 0 and len(profits) > 0:
             print("\n\n")
-            print("Market moved: ${} (initial: {}, current{})".format(train_ask[i] - market_start, start_ask, train_ask[i]))
-            market_start = train_ask[i]
+            print("(Global start: ${}, current ${})".format(start_ask, train_ask[i]))
             print("Last {} trades in {} minutes:".format(len(profits) + len(losses), train_period*(i - session_start)/60))
             session_start = i
-            print("   {} gains, avg: ${}".format(len(profits), sum(profits)/len(losses)))
-            print("   {} losses, avg: ${}".format(len(losses), sum(losses)/len(losses)))
-            print("   Net: ${}".format(sum(profits) + sum(losses)))  # Losses already negative
+            print("   Market moved:    ${}".format(round(train_ask[i] - market_start,2)))
+            market_start = train_ask[i]
+            print("   {} gains, avg:   ${}".format(len(profits), round(sum(profits)/len(profits),2)))
+            print("   {} losses, avg:  ${}".format(len(losses), round(sum(losses)/len(losses),2)))
+            print("   Session Net:     ${}".format(round(sum(profits) + sum(losses),2)))  # Losses already negative
             episode_profit += sum(profits) + sum(losses)
-            print("   Episode Net: ${}".format(episode_profit))
+            print("   Episode Net:     ${}".format(round(episode_profit,2)))
             print("\n\n")
             profits = []
             losses = []
         
-        if i%(int(train_length/10)) == 0:
+        if i%(int(train_size/10)) == 0:
             print("\n\n\n\n\n\n")
             print("#"*60)
-            print("{}% complete with episode {}/{}".format(int(100*float(i)/train_length), i_episode, num_episodes))
+            print("{}% complete with episode {}/{}".format(int(100*float(i)/train_size), i_episode, num_episodes))
             print("#"*60)
             print("\n\n\n\n\n\n")
 
@@ -478,6 +534,7 @@ for i_episode in range(num_episodes):
                 if reward > 0:
                     reward_track += reward.item()/scale
                     profits.append(reward.item()/scale)
+                    target_update_counter += 1
                 else:
                     reward_track += reward.item()/scale
                     losses.append(reward.item()/scale)
@@ -508,14 +565,14 @@ for i_episode in range(num_episodes):
         optimize_model()
 
 
-    if i % TARGET_UPDATE == 0:
-        target_net.load_state_dict(policy_net.state_dict())
+        if target_update_counter % TARGET_UPDATE == 0:
+            target_update_counter += 1
+            print("Updating target net...")
+            target_net.load_state_dict(policy_net.state_dict())
 
     print("Net: $", reward_track)
 
-    print(memory._len())
-
-    torch.save(policy_net.state_dict(),"saved_policy_{}_{}.pt")
+    torch.save(policy_net.state_dict(),"saved_policy_{}_{}.pt".format('ETH',datetime.datetime.now()))
 
 
 
