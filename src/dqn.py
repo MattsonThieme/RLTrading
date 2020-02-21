@@ -20,7 +20,6 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 Transition = namedtuple('Transition',
@@ -72,10 +71,9 @@ class Env(object):
     def normalize(self):
         # Normalize train_env/ask to [-1,1]
         self.spread = max(self.train_ask) - min(self.train_ask)
-        self.offset = self.train_ask.mean().item()
+        self.offset = min(self.train_ask)
         self.train_env = (self.train_env - self.offset)/(self.spread)
         self.train_ask = (self.train_ask - self.offset)/(self.spread)
-
 
     # Returns two values
     # 1) train_environment: a list train_length*#params long corresponding to a history of train_length at each period interval
@@ -207,6 +205,8 @@ class Agent(object):
         self.episode_profit = 0
         self.initial_market_value = 0
         self.session_begin_value = 0
+        self.gain_buy_sell = []
+        self.loss_buy_sell = []
 
     def update_target(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -216,7 +216,11 @@ class Agent(object):
 
             print(self.gains)
             print(' ')
+            print(self.gain_buy_sell)
+            print(' ')
             print(self.losses)
+            print(' ')
+            print(self.loss_buy_sell)
             print(' ')
             self.episode_profit += sum(self.gains) + sum(self.losses)
             print("Market moved ${} over the session".format(round((ask*spread + offset) - self.session_begin_value,2)))
@@ -352,8 +356,10 @@ class Agent(object):
                 if reward > 0:
                     self.gain_track += 1
                     self.gains.append(reward)
+                    self.gain_buy_sell.append((round(self.bought,4), round(ask,4)))
                 if reward <= 0:
                     self.losses.append(reward)
+                    self.loss_buy_sell.append((round(self.bought,4), round(ask,4)))
 
         return torch.tensor([reward]).type('torch.FloatTensor')
 
