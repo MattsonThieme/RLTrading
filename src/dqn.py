@@ -25,6 +25,28 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 Transition = namedtuple('Transition',
                         ('state', 'action', 'reward', 'target', 'next_action'))
 
+class LSTM(nn.Module):
+
+    def __init__(self, input_dim, hidden_dim, n_layers):
+        super(LSTM, self).__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim  # Note: output_dim = hidden_dim for now
+        self.n_layers = n_layers
+        self.lstm_layer = nn.LSTM(self.input_dim, self.hidden_dim, self.n_layers, batch_first=True)
+
+        self.batch_size = 1
+        self.seq_len = 1
+
+        self.inp = torch.randn(self.batch_size, self.seq_len, self.input_dim)
+        self.hidden_state = torch.randn(self.n_layers, self.batch_size, self.hidden_dim)
+        self.cell_state = torch.randn(self.n_layers, self.batch_size, self.hidden_dim)
+        self.hidden = (self.hidden_state, self.cell_state)
+
+    def forward(self, x):
+        x.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim]
+        self.out, self.hidden = self.lstm_layer(x, self.hidden)
+        return self.out.squeeze(0).squeeze(0) # Recast to [n_]
+
 class Env(object):
 
     def __init__(self, assets, minutes_back, period, params):
@@ -175,6 +197,12 @@ class Agent(object):
             self.target_net = DQN(self.input_dimension, self.n_actions).to(device)
             self.target_net.load_state_dict(self.policy_net.state_dict())
             self.target_net.eval()
+        if policy == 'lstm':
+            self.n_layers = 2
+            self.policy_net = LSTM(self.input_dimension, self.n_actions, self.n_layers).to(device)
+            self.target_net = LSTM(self.input_dimension, self.n_actions, self.n_layers).to(device)
+            self.target_net.load_state_dict(self.policy_net.state_dict())
+            self.target_net.eval()
 
         # State parameters
         self.state = None
@@ -199,7 +227,7 @@ class Agent(object):
 
         # Financial parameters
         self.fee = 0.00075  # 0.075% for Binance
-        self.investment = 1000
+        self.investment = 1#000
         self.losses = []
         self.gains = []
         self.episode_profit = 0
@@ -225,7 +253,7 @@ class Agent(object):
             self.episode_profit += sum(self.gains) + sum(self.losses)
             print("Market moved ${} over the session".format(round((ask*spread + offset) - self.session_begin_value,2)))
             print("Start: ${}, current: ${}".format(round(self.initial_market_value*spread + offset,3), round(ask*spread + offset,3)))
-            print("     Session wins: {} @ ${}".format(len(self.gains), sum(self.gains)/len(self.gains)))
+            print("     Session wins: {} @ $ {}".format(len(self.gains), sum(self.gains)/len(self.gains)))
             print("     Session loss: {} @ ${}".format(len(self.losses), sum(self.losses)/len(self.losses)))
             print("     Session Net:  ${}".format(sum(self.gains) + sum(self.losses)))  # Losses are already negative
             print("     Episode total: ${}\n\n\n".format(self.episode_profit))
@@ -426,7 +454,7 @@ class execute(object):
         self.extra = self.env.extra_values
 
         # Initialize the agent
-        self.agent = Agent('mlp', self.env.train_env[0].size()[0]+self.extra)
+        self.agent = Agent('lstm', self.env.train_env[0].size()[0]+self.extra)
         self.agent.initial_market_value = self.env.train_ask[0]
 
     def trade(self):
