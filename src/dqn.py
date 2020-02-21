@@ -204,7 +204,7 @@ class Agent(object):
             self.target_net.load_state_dict(self.policy_net.state_dict())
             self.target_net.eval()
         if policy == 'lstm':
-            self.n_layers = 2
+            self.n_layers = 1
             self.policy_net = LSTM(self.input_dimension, self.n_actions, self.n_layers).to(device)
             self.target_net = LSTM(self.input_dimension, self.n_actions, self.n_layers).to(device)
             self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -226,6 +226,7 @@ class Agent(object):
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
         self.BATCH_SIZE = 128
+        self.hold_penalty = np.inf  # Encourage the model to trade more quickly
 
         # Memory
         self.mem_capacity = 10000 
@@ -234,20 +235,24 @@ class Agent(object):
         # Financial parameters
         self.fee = 0.00075  # 0.075% for Binance
         self.investment = 1#000
+        self.investment_scale = 1000  # Some numerical issues if actual investment is this high, so just scale what we report
         self.losses = []
         self.gains = []
         self.episode_profit = 0
+        self.profit_track = []
         self.initial_market_value = 0
         self.session_begin_value = 0
         self.gain_buy_sell = []
         self.loss_buy_sell = []
+        self.gain_hold = []
+        self.loss_hold = []
 
     def update_target(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
     def report(self, ask, spread, offset):
         if len(self.gains) >= 20:
-
+            '''
             print(self.gains)
             print(' ')
             print(self.gain_buy_sell)
@@ -256,17 +261,20 @@ class Agent(object):
             print(' ')
             print(self.loss_buy_sell)
             print(' ')
-            self.episode_profit += sum(self.gains) + sum(self.losses)
+            '''
+            #self.episode_profit += sum(self.gains) + sum(self.losses)
             print("Market moved ${} over the session".format(round((ask*spread + offset) - self.session_begin_value,2)))
             print("Start: ${}, current: ${}".format(round(self.initial_market_value*spread + offset,3), round(ask*spread + offset,3)))
-            print("     Session wins: {} @ $ {}".format(len(self.gains), sum(self.gains)/len(self.gains)))
-            print("     Session loss: {} @ ${}".format(len(self.losses), sum(self.losses)/len(self.losses)))
-            print("     Session Net:  ${}".format(sum(self.gains) + sum(self.losses)))  # Losses are already negative
-            print("     Episode total: ${}\n\n\n".format(self.episode_profit))
+            print("     Session wins: {} @ $ {}, avg hold: {} steps".format(len(self.gains), self.investment_scale*round(sum(self.gains)/len(self.gains),3), round(sum(self.gain_hold)/len(self.gain_hold),0)))
+            print("     Session loss: {} @ ${}, avg hold: {} steps".format(len(self.losses), self.investment_scale*round(sum(self.losses)/len(self.losses),3), round(sum(self.loss_hold)/len(self.loss_hold),0)))
+            print("     Session Net:  ${}".format(self.investment_scale*sum(self.gains) + self.investment_scale*sum(self.losses)))  # Losses are already negative
+            print("     Episode total: ${}\n\n\n".format(self.investment_scale*self.episode_profit))
 
             self.session_begin_value = ask*spread + offset
             self.gains = []
             self.losses = []
+            self.gain_hold = []
+            self.loss_hold = []
 
     # Return asset status, bought value, 
     def take_action(self, state, ask, next_env, next_ask):
@@ -315,9 +323,9 @@ class Agent(object):
             if action == 0:
                 reward = 0
 
-            # Holding is legal
+            # Holding is legal, but don't hold forever
             if action == 1:
-                reward = 0
+                reward = -self.hold_time/self.hold_penalty
 
             # Selling is illegal
             if action == 2:
@@ -330,9 +338,9 @@ class Agent(object):
             if action == 0:
                 reward = -100
 
-            # Holding is legal
+            # Holding is legal, but don't hold forever
             if action == 1:
-                reward = 0
+                reward = -self.hold_time/self.hold_penalty
 
             # Selling is legal
             if action == 2:
@@ -344,7 +352,8 @@ class Agent(object):
         
         return torch.tensor([reward]).type('torch.FloatTensor')
 
-    ### Try not penalizing it for making the wrong choice, just for making legal choices
+    ### Try incentivising it to sell sooner. It's starting to hold for a long time
+    ### Try making the reward the total value, not just the immediate value
     def reward_calc(self, action, asset_status, investment, bought, hold_time, fee, ask):
 
         # Money is in our wallet
@@ -356,10 +365,10 @@ class Agent(object):
                 self.asset_status = 1  # Money is now in the asset
                 reward = 0
 
-            # Holding is legal
+            # Holding is legal, but don't hold forever
             if action == 1:
                 self.hold_time += 1
-                reward = 0
+                reward = -self.hold_time/self.hold_penalty
 
             # Selling is illegal
             if action == 2:
@@ -374,29 +383,43 @@ class Agent(object):
                 self.hold_time += 1
                 reward = -100
 
-            # Holding is legal
+            # Holding is legal, but don't hold forever
             if action == 1:
                 self.hold_time += 1
-                reward = 0
+                reward = -self.hold_time/self.hold_penalty
 
             # Selling is legal
             if action == 2:
                 self.asset_status = 0  # Money is back in our wallet
-                self.hold_time = 0
+                
 
                 buy_cost = self.investment*self.fee
                 bought_shares = (self.investment - buy_cost)/self.bought
                 sold_revenue = bought_shares*ask
                 sell_cost = sold_revenue*self.fee
                 reward = sold_revenue - sell_cost - buy_cost - self.investment
+                self.episode_profit += reward
 
                 if reward > 0:
+                    print("Gain: $ {}, bought at {}, sold at {} after {} steps".format(round(self.investment_scale*reward,2), round(self.bought,4), round(ask,4), self.hold_time))
                     self.gain_track += 1
                     self.gains.append(reward)
                     self.gain_buy_sell.append((round(self.bought,4), round(ask,4)))
+                    self.gain_hold.append(self.hold_time)
+                    self.profit_track.append(reward)
+
+                    #reward = self.episode_profit
+
                 if reward <= 0:
+                    print("Loss: ${}, bought at {}, sold at {} after {} steps".format(round(self.investment_scale*reward,2), round(self.bought,4), round(ask,4), self.hold_time))
                     self.losses.append(reward)
                     self.loss_buy_sell.append((round(self.bought,4), round(ask,4)))
+                    self.loss_hold.append(self.hold_time)
+                    self.profit_track.append(reward)
+
+                    #reward = self.episode_profit
+
+                self.hold_time = 0
 
         return torch.tensor([reward]).type('torch.FloatTensor')
 
@@ -493,34 +516,10 @@ class execute(object):
         # Save policy every episode
         torch.save(self.agent.policy_net.state_dict(),"saved_policy_{}_{}.pt".format('ETH',datetime.datetime.now()))
 
-    def lstm_trade(self):
-        # Iterate over states
 
-        for episode in range(self.env.num_episodes):
-            for i, state in enumerate(self.env.train_env):
-
-                # Add env parameters to the state
-                state = self.env.update(state, self.agent.asset_status, self.agent.bought, self.agent.hold_time)
-                
-                # Take an action
-                self.agent.take_action(state, self.env.train_ask[i], self.env.train_env[i+1], self.env.train_ask[i+1])
-
-                # Optimize the agent according to that action
-                self.agent.optimize_model(self.agent.BATCH_SIZE)
-
-                # Output training info
-                self.agent.report(self.env.train_ask[i], self.env.spread, self.env.offset)
-
-                # Update target network
-                if self.agent.gain_track > self.agent.TARGET_UPDATE:
-                    self.agent.gain_track = 0
-                    print("Updating target net...")
-                    self.agent.target_net.load_state_dict(self.agent.policy_net.state_dict())
-        
-        # Save policy every episode
-        torch.save(self.agent.policy_net.state_dict(),"saved_policy_{}_{}.pt".format('ETH',datetime.datetime.now()))
-
-
+# Add some parameters here so it's easier to prototype
+investment = 1
+model = 'lstm'
 
 beast = execute()
 beast.trade()
