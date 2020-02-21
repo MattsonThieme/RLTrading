@@ -25,6 +25,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 Transition = namedtuple('Transition',
                         ('state', 'action', 'reward', 'target', 'next_action'))
 
+
+# Add an MLP to consider things like bought price, hold_time separately from the LSTM that is processing prices
+# Probably need to input the state in two parts, which means you'll need to cat a tensor of [asset_status, bought, hold_time]
 class LSTM(nn.Module):
 
     def __init__(self, input_dim, hidden_dim, n_layers):
@@ -41,6 +44,8 @@ class LSTM(nn.Module):
         self.hidden_state = torch.randn(self.n_layers, self.batch_size, self.hidden_dim)
         self.cell_state = torch.randn(self.n_layers, self.batch_size, self.hidden_dim)
         self.hidden = (self.hidden_state, self.cell_state)
+
+
 
     def forward(self, x):
         inp = x.clone()
@@ -69,7 +74,7 @@ class Env(object):
         self.hold_time = 0
 
         self.num_episodes = 1
-        self.extra_values = 2  # Asset status, bought value, hold_time
+        self.extra_values = 1#2  # Asset status, bought value, hold_time
         self.train_params = params  # ['ask']
         self.train_env = None
         self.train_ask = None
@@ -91,9 +96,9 @@ class Env(object):
     # Return the next state, adding necessary environmental parameters
     def update(self, state, asset_status, bought, hold_time):
         # Add the current asset status and bought value to the state to the state
-        state = torch.cat((state, torch.tensor([asset_status]).type('torch.FloatTensor')), 0).to(device)
-        state = torch.cat((state, torch.tensor([bought]).type('torch.FloatTensor')), 0).to(device)
-        #state = torch.cat((state, torch.tensor([hold_time]).type('torch.FloatTensor')), 0).to(device)
+        #state = torch.cat((torch.tensor([asset_status]).type('torch.FloatTensor'), state), 0).to(device)
+        state = torch.cat((torch.tensor([bought]).type('torch.FloatTensor'), state), 0).to(device)
+        #state = torch.cat((torch.tensor([hold_time]).type('torch.FloatTensor'), state), 0).to(device)
         return state
 
     def normalize(self):
@@ -226,7 +231,7 @@ class Agent(object):
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
         self.BATCH_SIZE = 128
-        self.hold_penalty = np.inf  # Encourage the model to trade more quickly
+        self.hold_penalty = 10 #np.inf  # Encourage the model to trade more quickly (hold_time/hold_penalty)
 
         # Memory
         self.mem_capacity = 10000 
@@ -263,12 +268,12 @@ class Agent(object):
             print(' ')
             '''
             #self.episode_profit += sum(self.gains) + sum(self.losses)
-            print("Market moved ${} over the session".format(round((ask*spread + offset) - self.session_begin_value,2)))
+            print("\nMarket moved ${} over the session".format(round((ask*spread + offset) - self.session_begin_value,2)))
             print("Start: ${}, current: ${}".format(round(self.initial_market_value*spread + offset,3), round(ask*spread + offset,3)))
             print("     Session wins: {} @ $ {}, avg hold: {} steps".format(len(self.gains), self.investment_scale*round(sum(self.gains)/len(self.gains),3), round(sum(self.gain_hold)/len(self.gain_hold),0)))
             print("     Session loss: {} @ ${}, avg hold: {} steps".format(len(self.losses), self.investment_scale*round(sum(self.losses)/len(self.losses),3), round(sum(self.loss_hold)/len(self.loss_hold),0)))
-            print("     Session Net:  ${}".format(self.investment_scale*sum(self.gains) + self.investment_scale*sum(self.losses)))  # Losses are already negative
-            print("     Episode total: ${}\n\n\n".format(self.investment_scale*self.episode_profit))
+            print("     Session Net:  ${}".format(round(self.investment_scale*(sum(self.gains) + sum(self.losses)),2)))  # Losses are already negative
+            print("     Episode total: ${}\n\n\n".format(round(self.investment_scale*self.episode_profit,2)))
 
             self.session_begin_value = ask*spread + offset
             self.gains = []
@@ -295,9 +300,9 @@ class Agent(object):
         # Calculate target values
         target = next_env
         # Add the current asset status and bought value to the next
-        target = torch.cat((target, torch.tensor([self.asset_status]).type('torch.FloatTensor')), 0).to(device)
-        target = torch.cat((target, torch.tensor([self.bought]).type('torch.FloatTensor')), 0).to(device)
-        #target = torch.cat((target, torch.tensor([self.hold_time]).type('torch.FloatTensor')), 0).to(device)
+        #target = torch.cat((torch.tensor([self.asset_status]).type('torch.FloatTensor'), target), 0).to(device)
+        target = torch.cat((torch.tensor([self.bought]).type('torch.FloatTensor'), target), 0).to(device)
+        #target = torch.cat((torch.tensor([self.hold_time]).type('torch.FloatTensor'), target), 0).to(device)
 
         # Push memory into buffer
         next_action = 0
@@ -408,8 +413,6 @@ class Agent(object):
                     self.gain_hold.append(self.hold_time)
                     self.profit_track.append(reward)
 
-                    #reward = self.episode_profit
-
                 if reward <= 0:
                     print("Loss: ${}, bought at {}, sold at {} after {} steps".format(round(self.investment_scale*reward,2), round(self.bought,4), round(ask,4), self.hold_time))
                     self.losses.append(reward)
@@ -417,7 +420,8 @@ class Agent(object):
                     self.loss_hold.append(self.hold_time)
                     self.profit_track.append(reward)
 
-                    #reward = self.episode_profit
+                #if self.episode_profit > 0:
+                #    reward = self.episode_profit
 
                 self.hold_time = 0
 
