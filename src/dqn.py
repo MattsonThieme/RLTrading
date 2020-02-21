@@ -43,9 +43,15 @@ class LSTM(nn.Module):
         self.hidden = (self.hidden_state, self.cell_state)
 
     def forward(self, x):
-        x.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim]
-        self.out, self.hidden = self.lstm_layer(x, self.hidden)
-        return self.out.squeeze(0).squeeze(0) # Recast to [n_]
+        inp = x.clone()
+        # Handle various batch sizes between regular state vs. transition history - not very elegant, but it works
+        if len(inp.shape) == 1:
+            inp.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim]
+        else:
+            inp.unsqueeze_(0)
+        self.out, self.hidden = self.lstm_layer(inp, self.hidden)
+        #x.squeeze(0).squeeze(0)
+        return self.out.squeeze(0).squeeze(0) # Recast to [hidden_dim]
 
 class Env(object):
 
@@ -264,6 +270,7 @@ class Agent(object):
 
     # Return asset status, bought value, 
     def take_action(self, state, ask, next_env, next_ask):
+        
         rand = random.random()
         epsilon_threshold = self.EPS_END + (self.EPS_START - self.EPS_END)*math.exp(-1. * self.total_steps/self.EPS_DECAY)
         self.total_steps += 1
@@ -274,6 +281,7 @@ class Agent(object):
             #print("Chose randomly ({})...".format(epsilon_threshold))
             action = torch.tensor([[random.randrange(self.n_actions)]], device=device, dtype=torch.long)
 
+        
         reward = self.reward_calc(action, self.asset_status, self.investment, self.bought, self.hold_time, self.fee, ask)
 
         # Calculate target values
@@ -293,6 +301,7 @@ class Agent(object):
             # All local values were updated with the last reward_calc
             next_reward = self.target_reward_calc(next_action, self.asset_status, self.investment, self.bought, self.hold_time, self.fee, next_ask)
 
+        
         self.memory.push(state, action, reward, target, next_reward)
 
     # This separate calculator exists so we don't update the agen't state with the target reward calculation. Not ideal...
@@ -426,7 +435,7 @@ class Agent(object):
         loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
 
         self.optimizer.zero_grad()
-        loss.backward()
+        loss.backward(retain_graph=True)
         for param in self.policy_net.parameters():
             param.grad.data.clamp_(-1,1)
         self.optimizer.step()
@@ -483,6 +492,34 @@ class execute(object):
         
         # Save policy every episode
         torch.save(self.agent.policy_net.state_dict(),"saved_policy_{}_{}.pt".format('ETH',datetime.datetime.now()))
+
+    def lstm_trade(self):
+        # Iterate over states
+
+        for episode in range(self.env.num_episodes):
+            for i, state in enumerate(self.env.train_env):
+
+                # Add env parameters to the state
+                state = self.env.update(state, self.agent.asset_status, self.agent.bought, self.agent.hold_time)
+                
+                # Take an action
+                self.agent.take_action(state, self.env.train_ask[i], self.env.train_env[i+1], self.env.train_ask[i+1])
+
+                # Optimize the agent according to that action
+                self.agent.optimize_model(self.agent.BATCH_SIZE)
+
+                # Output training info
+                self.agent.report(self.env.train_ask[i], self.env.spread, self.env.offset)
+
+                # Update target network
+                if self.agent.gain_track > self.agent.TARGET_UPDATE:
+                    self.agent.gain_track = 0
+                    print("Updating target net...")
+                    self.agent.target_net.load_state_dict(self.agent.policy_net.state_dict())
+        
+        # Save policy every episode
+        torch.save(self.agent.policy_net.state_dict(),"saved_policy_{}_{}.pt".format('ETH',datetime.datetime.now()))
+
 
 
 beast = execute()
