@@ -26,8 +26,10 @@ Transition = namedtuple('Transition',
                         ('state', 'properties', 'action', 'reward', 'target', 'next_action'))
 
 
-# Add an MLP to consider things like bought price, hold_time separately from the LSTM that is processing prices
-# Probably need to input the state in two parts, which means you'll need to cat a tensor of [asset_status, bought, hold_time]
+# This model has three parts
+# 1) An LSTM processing only price history data
+# 2) A 'legality network' looking at asset_status, bought price, hold_time to determine if certain actions are legal
+# 3) A 'decision network' looking at the output of 1) and 2) to make the final decision
 class LSTM(nn.Module):
 
     def __init__(self, input_dim, hidden_dim, n_layers, properties):
@@ -62,31 +64,23 @@ class LSTM(nn.Module):
         #prop = properties.clone()
         # Handle various batch sizes between regular state vs. transition history - not very elegant, but it works
         if len(inp.shape) == 1:
-            inp.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim]
+            inp.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim] - needed for LSTM
         else:
             inp.unsqueeze_(0)
         self.out, self.hidden = self.lstm_layer(inp, self.hidden)
         #x.squeeze(0).squeeze(0)
 
-        # Legality network
-        print("Properties::", properties)
         legal = F.relu(self.ln1(properties))
         legal = F.relu(self.ln2(legal))
 
         # Decision network
-        print("Legal:")
-        print(legal.shape)
-        print("self.out:")
-        print(len(self.out.shape))
-        print(self.out.shape)
-
-        ind = torch.cat((legal, self.out.squeeze(0).squeeze(0)),0).to(device)  # Squeeze out tensor to recast to [hidden_dim]
-        print("ind: ")
-        print(ind)
+        if self.out.shape[1] == 1:
+            ind = torch.cat((legal, self.out.squeeze(0).squeeze(0)),0).to(device)  # Squeeze out tensor to recast to [hidden_dim]
+        else:
+            ind = torch.cat((self.out, legal.unsqueeze(0)),2).squeeze(0).to(device)  # Cat batches
         dec = F.relu(self.dn1(ind))
         dec = F.relu(self.dn2(dec))
 
-        #return self.out.squeeze(0).squeeze(0) # Recast to [hidden_dim]
         return self.dn3(dec)
 
 class DQN(nn.Module):
@@ -289,18 +283,9 @@ class Agent(object):
 
     def report(self, ask, spread, offset):
         if len(self.gains) >= 20:
-            '''
-            print(self.gains)
-            print(' ')
-            print(self.gain_buy_sell)
-            print(' ')
-            print(self.losses)
-            print(' ')
-            print(self.loss_buy_sell)
-            print(' ')
-            '''
-            #self.episode_profit += sum(self.gains) + sum(self.losses)
-            print("\nMarket moved ${} over the session".format(round((ask*spread + offset) - self.session_begin_value,2)))
+
+            print("\nGlobal start: ${}, current: :${}".format(round(self.initial_market_value*spread + offset, 2), ask*spread + offset))
+            print("Market moved ${} over the session".format(round((ask*spread + offset) - self.session_begin_value,2)))
             print("Start: ${}, current: ${}".format(round(self.initial_market_value*spread + offset,3), round(ask*spread + offset,3)))
             print("     Session wins: {} @ $ {}, avg hold: {} steps".format(len(self.gains), self.investment_scale*round(sum(self.gains)/len(self.gains),3), round(sum(self.gain_hold)/len(self.gain_hold),0)))
             print("     Session loss: {} @ ${}, avg hold: {} steps".format(len(self.losses), self.investment_scale*round(sum(self.losses)/len(self.losses),3), round(sum(self.loss_hold)/len(self.loss_hold),0)))
