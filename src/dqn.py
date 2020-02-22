@@ -23,17 +23,17 @@ import torch.nn.functional as F
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 Transition = namedtuple('Transition',
-                        ('state', 'action', 'reward', 'target', 'next_action'))
+                        ('state', 'properties', 'action', 'reward', 'target', 'next_action'))
 
 
 # Add an MLP to consider things like bought price, hold_time separately from the LSTM that is processing prices
 # Probably need to input the state in two parts, which means you'll need to cat a tensor of [asset_status, bought, hold_time]
 class LSTM(nn.Module):
 
-    def __init__(self, input_dim, hidden_dim, n_layers):
+    def __init__(self, input_dim, hidden_dim, n_layers, properties):
         super(LSTM, self).__init__()
         self.input_dim = input_dim
-        self.hidden_dim = hidden_dim  # Note: output_dim = hidden_dim for now
+        self.hidden_dim = hidden_dim  # Note: output_dim for LSTM = hidden_dim for now
         self.n_layers = n_layers
         self.lstm_layer = nn.LSTM(self.input_dim, self.hidden_dim, self.n_layers, batch_first=True)
 
@@ -45,10 +45,21 @@ class LSTM(nn.Module):
         self.cell_state = torch.randn(self.n_layers, self.batch_size, self.hidden_dim)
         self.hidden = (self.hidden_state, self.cell_state)
 
+        # Legality network
+        prop_length = properties.size()[0]
+        dec_size = 8  # Size of the final embedding, try some diff vals
+        self.ln1 = nn.Linear(prop_length, 32)
+        self.ln2 = nn.Linear(32, dec_size)
 
+        # Decision network
+        self.output_dim = 3
+        self.dn1 = nn.Linear(dec_size+hidden_dim, 100)
+        self.dn2 = nn.Linear(100, 50)
+        self.dn3 = nn.Linear(50, self.output_dim)
 
-    def forward(self, x):
+    def forward(self, x, properties):
         inp = x.clone()
+        #prop = properties.clone()
         # Handle various batch sizes between regular state vs. transition history - not very elegant, but it works
         if len(inp.shape) == 1:
             inp.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim]
@@ -56,7 +67,43 @@ class LSTM(nn.Module):
             inp.unsqueeze_(0)
         self.out, self.hidden = self.lstm_layer(inp, self.hidden)
         #x.squeeze(0).squeeze(0)
-        return self.out.squeeze(0).squeeze(0) # Recast to [hidden_dim]
+
+        # Legality network
+        print("Properties::", properties)
+        legal = F.relu(self.ln1(properties))
+        legal = F.relu(self.ln2(legal))
+
+        # Decision network
+        print("Legal:")
+        print(legal.shape)
+        print("self.out:")
+        print(len(self.out.shape))
+        print(self.out.shape)
+
+        ind = torch.cat((legal, self.out.squeeze(0).squeeze(0)),0).to(device)  # Squeeze out tensor to recast to [hidden_dim]
+        print("ind: ")
+        print(ind)
+        dec = F.relu(self.dn1(ind))
+        dec = F.relu(self.dn2(dec))
+
+        #return self.out.squeeze(0).squeeze(0) # Recast to [hidden_dim]
+        return self.dn3(dec)
+
+class DQN(nn.Module):
+
+    def __init__(self, in_dim, out_dim):
+        super(DQN, self).__init__()
+        self.fc1 = nn.Linear(in_dim, 500)
+        self.fc2 = nn.Linear(500, 300)
+        self.fc3 = nn.Linear(300, 100)
+        self.fc4 = nn.Linear(100, out_dim)
+
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        return self.fc4(x)
+
 
 class Env(object):
 
@@ -74,7 +121,6 @@ class Env(object):
         self.hold_time = 0
 
         self.num_episodes = 1
-        self.extra_values = 1#2  # Asset status, bought value, hold_time
         self.train_params = params  # ['ask']
         self.train_env = None
         self.train_ask = None
@@ -97,7 +143,7 @@ class Env(object):
     def update(self, state, asset_status, bought, hold_time):
         # Add the current asset status and bought value to the state to the state
         #state = torch.cat((torch.tensor([asset_status]).type('torch.FloatTensor'), state), 0).to(device)
-        state = torch.cat((torch.tensor([bought]).type('torch.FloatTensor'), state), 0).to(device)
+        #state = torch.cat((torch.tensor([bought]).type('torch.FloatTensor'), state), 0).to(device)
         #state = torch.cat((torch.tensor([hold_time]).type('torch.FloatTensor'), state), 0).to(device)
         return state
 
@@ -180,21 +226,6 @@ class ReplayMemory(object):
         return len(self.memory)
 
 
-class DQN(nn.Module):
-
-    def __init__(self, in_dim, out_dim):
-        super(DQN, self).__init__()
-        self.fc1 = nn.Linear(in_dim, 500)
-        self.fc2 = nn.Linear(500, 300)
-        self.fc3 = nn.Linear(300, 100)
-        self.fc4 = nn.Linear(100, out_dim)
-
-    def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = F.relu(self.fc3(x))
-        return self.fc4(x)
-
 class Agent(object):
 
     def __init__(self, policy, state_size):
@@ -202,18 +233,6 @@ class Agent(object):
         # Model parameters
         self.input_dimension = state_size
         self.n_actions = 3  # Buy, hold, sell
-        
-        if policy == 'mlp':
-            self.policy_net = DQN(self.input_dimension, self.n_actions).to(device)
-            self.target_net = DQN(self.input_dimension, self.n_actions).to(device)
-            self.target_net.load_state_dict(self.policy_net.state_dict())
-            self.target_net.eval()
-        if policy == 'lstm':
-            self.n_layers = 1
-            self.policy_net = LSTM(self.input_dimension, self.n_actions, self.n_layers).to(device)
-            self.target_net = LSTM(self.input_dimension, self.n_actions, self.n_layers).to(device)
-            self.target_net.load_state_dict(self.policy_net.state_dict())
-            self.target_net.eval()
 
         # State parameters
         self.state = None
@@ -221,17 +240,6 @@ class Agent(object):
         self.bought = 0
         self.hold_time = 0
         self.gain_track = 1
-
-        # Learning parameters
-        self.GAMMA = 0.999
-        self.EPS_START = 0.9
-        self.EPS_END = 0.001
-        self.EPS_DECAY = 5000
-        self.TARGET_UPDATE = 80
-        self.optimizer = optim.RMSprop(self.policy_net.parameters())
-        self.total_steps = 0
-        self.BATCH_SIZE = 128
-        self.hold_penalty = 10 #np.inf  # Encourage the model to trade more quickly (hold_time/hold_penalty)
 
         # Memory
         self.mem_capacity = 10000 
@@ -251,6 +259,30 @@ class Agent(object):
         self.loss_buy_sell = []
         self.gain_hold = []
         self.loss_hold = []
+
+        if policy == 'mlp':
+            self.policy_net = DQN(self.input_dimension, self.n_actions).to(device)
+            self.target_net = DQN(self.input_dimension, self.n_actions).to(device)
+            self.target_net.load_state_dict(self.policy_net.state_dict())
+            self.target_net.eval()
+        if policy == 'lstm':
+            self.n_layers = 1
+            self.policy_net = LSTM(self.input_dimension, self.n_actions, self.n_layers, self.gen_properties()).to(device)
+            self.target_net = LSTM(self.input_dimension, self.n_actions, self.n_layers, self.gen_properties()).to(device)
+            self.target_net.load_state_dict(self.policy_net.state_dict())
+            self.target_net.eval()
+
+        # Learning parameters
+        self.GAMMA = 0.999
+        self.EPS_START = 0.9
+        self.EPS_END = 0.001
+        self.EPS_DECAY = 5000
+        self.TARGET_UPDATE = 80
+        self.optimizer = optim.RMSprop(self.policy_net.parameters())
+        self.total_steps = 0
+        self.BATCH_SIZE = 128
+        self.hold_penalty = 10 #np.inf  # Encourage the model to trade more quickly (hold_time/hold_penalty)
+
 
     def update_target(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -281,15 +313,19 @@ class Agent(object):
             self.gain_hold = []
             self.loss_hold = []
 
+    def gen_properties(self):
+        return torch.tensor([self.asset_status, self.bought, self.hold_time]).type('torch.FloatTensor')
+
+
     # Return asset status, bought value, 
-    def take_action(self, state, ask, next_env, next_ask):
+    def take_action(self, state, properties, ask, next_env, next_ask):
         
         rand = random.random()
         epsilon_threshold = self.EPS_END + (self.EPS_START - self.EPS_END)*math.exp(-1. * self.total_steps/self.EPS_DECAY)
         self.total_steps += 1
         if rand > epsilon_threshold:
             with torch.no_grad():
-                action = self.policy_net(state).max(0)[1].view(1,1)  # Returns the index of the maximum output in a 1x1 tensor
+                action = self.policy_net(state, properties).max(0)[1].view(1,1)  # Returns the index of the maximum output in a 1x1 tensor
         else:
             #print("Chose randomly ({})...".format(epsilon_threshold))
             action = torch.tensor([[random.randrange(self.n_actions)]], device=device, dtype=torch.long)
@@ -301,21 +337,22 @@ class Agent(object):
         target = next_env
         # Add the current asset status and bought value to the next
         #target = torch.cat((torch.tensor([self.asset_status]).type('torch.FloatTensor'), target), 0).to(device)
-        target = torch.cat((torch.tensor([self.bought]).type('torch.FloatTensor'), target), 0).to(device)
+        #target = torch.cat((torch.tensor([self.bought]).type('torch.FloatTensor'), target), 0).to(device)
         #target = torch.cat((torch.tensor([self.hold_time]).type('torch.FloatTensor'), target), 0).to(device)
 
         # Push memory into buffer
+        next_properties = self.gen_properties()
         next_action = 0
         next_reward = 0
         with torch.no_grad():
             sold_target = next_ask
-            next_action = self.target_net(target).max(0)[1].view(1,1)
+            next_action = self.target_net(target, next_properties).max(0)[1].view(1,1)
 
             # All local values were updated with the last reward_calc
             next_reward = self.target_reward_calc(next_action, self.asset_status, self.investment, self.bought, self.hold_time, self.fee, next_ask)
 
         
-        self.memory.push(state, action, reward, target, next_reward)
+        self.memory.push(state, properties, action, reward, target, next_reward)
 
     # This separate calculator exists so we don't update the agen't state with the target reward calculation. Not ideal...
     def target_reward_calc(self, action, asset_status, investment, bought, hold_time, fee, ask):
@@ -435,25 +472,28 @@ class Agent(object):
         transitions = self.memory.sample(BATCH_SIZE)
 
         batch_state = []
+        batch_prop = []
         batch_action = []
         batch_reward = []
         batch_target = []
         batch_next_action = []
         for i, trans in enumerate(transitions):
             batch_state.append(trans.state)
+            batch_prop.append(trans.properties)
             batch_action.append(trans.action[0])
             batch_reward.append(trans.reward[0])
             batch_target.append(trans.target[0])
             batch_next_action.append(trans.next_action[0])
 
         batch_state = torch.stack(batch_state).to(device)
+        batch_prop = torch.stack(batch_prop).to(device)
         batch_action = torch.stack(batch_action).to(device)
         batch_reward = torch.stack(batch_reward).to(device)
         batch_target = torch.stack(batch_target).to(device)
         batch_next_action = torch.stack(batch_next_action).to(device)
 
         # State-action values
-        state_action_values = self.policy_net(batch_state).gather(1, batch_action)
+        state_action_values = self.policy_net(batch_state, batch_prop).gather(1, batch_action)
 
         # Target values
         expected_state_action_values = (batch_next_action[0]*self.GAMMA) + batch_reward
@@ -487,10 +527,9 @@ class execute(object):
         self.env = Env(self.asset, self.minutes_back, self.period, self.params)
         self.env.load_data()
         self.env.normalize()
-        self.extra = self.env.extra_values
 
         # Initialize the agent
-        self.agent = Agent('lstm', self.env.train_env[0].size()[0]+self.extra)
+        self.agent = Agent('lstm', self.env.train_env[0].size()[0])
         self.agent.initial_market_value = self.env.train_ask[0]
 
     def trade(self):
@@ -503,7 +542,7 @@ class execute(object):
                 state = self.env.update(state, self.agent.asset_status, self.agent.bought, self.agent.hold_time)
                 
                 # Take an action
-                self.agent.take_action(state, self.env.train_ask[i], self.env.train_env[i+1], self.env.train_ask[i+1])
+                self.agent.take_action(state, self.agent.gen_properties(), self.env.train_ask[i], self.env.train_env[i+1], self.env.train_ask[i+1])
 
                 # Optimize the agent according to that action
                 self.agent.optimize_model(self.agent.BATCH_SIZE)
