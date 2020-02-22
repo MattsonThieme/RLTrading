@@ -1,9 +1,7 @@
 
 ## TODO ##
 
-# Build LSTM
-# Build 1D CNN
-# Eventually will need valid/test data, but that is easy
+# Parse data into contiguous chunks/episode - thats where the 53% price drop comes from
 
 
 import math
@@ -143,8 +141,14 @@ class Env(object):
 
     def normalize(self):
         # Normalize train_env/ask to [-1,1]
-        self.spread = max(self.train_ask) - min(self.train_ask)
-        self.offset = min(self.train_ask)
+        max_val = 0
+        min_val = np.inf
+        for i in self.train_ask:
+            max_val = max(max(i), max_val)
+            min_val = min(min(i), min_val)
+
+        self.spread = max_val - min_val#max(self.train_ask) - min(self.train_ask)
+        self.offset = min_val
         self.train_env = (self.train_env - self.offset)/(self.spread)
         self.train_ask = (self.train_ask - self.offset)/(self.spread)
 
@@ -153,18 +157,23 @@ class Env(object):
     # 2) env_value: a list of floats corresponding to the ask value at the current timestep
     def parse_data(self, path, train_length, params, period):
         print("Processing data...")
-        with open(self.data_path, 'r') as f:
+        with open(path, 'r') as f:
             data = csv.reader(f)
             data = list(data)
             labels = data.pop(0)
-            indices = [labels.index(i) for i in self.params]
-            data = np.array(data)
+            indices = [labels.index(i) for i in params]
+            max_index = len(data)-len(data)%period  # Don't overshoot
+            data = np.array(data[:max_index])
 
             train_environment = []
             env_value = []
 
+
             # Multiplex periods of > 1 second
             for i in range(period):
+
+                train_episode = []
+                val_episode = []
 
                 # Filter data s.t. only rows corresponding to that period remain
                 period_indices = [j for j in range(i, len(data), period)]
@@ -175,24 +184,29 @@ class Env(object):
 
                 # Slice indices to determine individual environment states
                 begin = 0
-                end = train_length
+                end = int(train_length)
                 
                 while end < len(tempdata[0]):
                     train_elem = []
                     for j in indices:
                         train_elem.extend(tempdata[j][begin:end])
-                    train_environment.append(train_elem)
-                    env_value.append(tempdata[labels.index('ask')][end-1])
+                    
+                    train_episode.append(train_elem)
+                    val_episode.append(tempdata[labels.index('ask')][end-1])
 
                     begin += 1
                     end += 1
                 print("{}% complete...".format(int(100*float(i)/period)))
+
+                train_environment.append(train_episode)
+                env_value.append(val_episode)
 
         train_environment = np.array(train_environment)
         train_environment = train_environment.astype(float)
         train_environment = torch.from_numpy(train_environment).type('torch.FloatTensor').to(device)
         env_value = np.array(env_value)
         env_value = env_value.astype(float)
+
         return train_environment, env_value
 
 
@@ -219,7 +233,7 @@ class ReplayMemory(object):
     def _len(self):
         return len(self.memory)
 
-
+# Try rewarding it for profit/timestep
 class Agent(object):
 
     def __init__(self, policy, state_size):
@@ -270,13 +284,14 @@ class Agent(object):
         self.GAMMA = 0.999
         self.EPS_START = 0.9
         self.EPS_END = 0.001
-        self.EPS_DECAY = 5000
-        self.TARGET_UPDATE = 80
+        self.EPS_DECAY = 2000
+        self.TARGET_UPDATE = 20
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
-        self.BATCH_SIZE = 128
-        self.hold_penalty = 10 #np.inf  # Encourage the model to trade more quickly (hold_time/hold_penalty)
-
+        self.BATCH_SIZE = 64
+        self.hold_penalty = np.inf  # Encourage the model to trade more quickly (hold_time/hold_penalty)
+        self.max_reward_multiplier = 2
+        self.reward_turning_point = 160  # 40 mins at 15s period
 
     def update_target(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -315,7 +330,6 @@ class Agent(object):
             #print("Chose randomly ({})...".format(epsilon_threshold))
             action = torch.tensor([[random.randrange(self.n_actions)]], device=device, dtype=torch.long)
 
-        
         reward = self.reward_calc(action, self.asset_status, self.investment, self.bought, self.hold_time, self.fee, ask)
 
         # Calculate target values
@@ -376,6 +390,12 @@ class Agent(object):
                 sold_revenue = bought_shares*ask
                 sell_cost = sold_revenue*self.fee
                 reward = sold_revenue - sell_cost - buy_cost - self.investment
+
+                if reward > 0:
+                    reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
+                else:
+                    reward = reward
+            
         
         return torch.tensor([reward]).type('torch.FloatTensor')
 
@@ -434,6 +454,13 @@ class Agent(object):
                     self.gain_buy_sell.append((round(self.bought,4), round(ask,4)))
                     self.gain_hold.append(self.hold_time)
                     self.profit_track.append(reward)
+                    
+                    # Optimize for highest reward/time
+                    print("Rewa: $ {}".format(reward))
+                    #reward *= 1.3*np.exp(-0.5*(self.hold_time/60)**2)  # Another magic number, start disincentivizing rewards after ~17 minutes
+                    reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
+                    print("Rewa: $ {}\n".format(reward))
+
 
                 if reward <= 0:
                     print("Loss: ${}, bought at {}, sold at {} after {} steps".format(round(self.investment_scale*reward,2), round(self.bought,4), round(ask,4), self.hold_time))
@@ -441,9 +468,12 @@ class Agent(object):
                     self.loss_buy_sell.append((round(self.bought,4), round(ask,4)))
                     self.loss_hold.append(self.hold_time)
                     self.profit_track.append(reward)
+                    #reward *= np.log(2*self.hold_time)  # Penalize model for holding onto a losing trade proportional to the time it holds on
 
-                #if self.episode_profit > 0:
-                #    reward = self.episode_profit
+                    # Optimize for highest reward/time
+                    print("Rewa: ${}".format(reward))
+                    reward = reward
+                    print("Rewa: ${}\n".format(reward))
 
                 self.hold_time = 0
 
@@ -488,8 +518,8 @@ class Agent(object):
 
         self.optimizer.zero_grad()
         loss.backward(retain_graph=True)
-        for param in self.policy_net.parameters():
-            param.grad.data.clamp_(-1,1)
+        #for param in self.policy_net.parameters():  # restrict grad updates to (-1,1)
+        #    param.grad.data.clamp_(-1,1)
         self.optimizer.step()
 
     # Implement to actually send orders with ccxt
@@ -504,7 +534,7 @@ class execute(object):
 
         # Params for initializing the environment
         self.asset = 'ETH'
-        self.minutes_back = 10
+        self.minutes_back = 30
         self.period = 15
         self.params = ['ask']
 
@@ -514,26 +544,30 @@ class execute(object):
         self.env.normalize()
 
         # Initialize the agent
-        self.agent = Agent('lstm', self.env.train_env[0].size()[0])
+        self.agent = Agent('lstm', self.env.train_env[0][0].size()[0])
         self.agent.initial_market_value = self.env.train_ask[0]
 
     def trade(self):
         # Iterate over states
 
-        for episode in range(self.env.num_episodes):
-            for i, state in enumerate(self.env.train_env):
+        print("Len env: ", len(self.env.train_env))
+
+        for e, episode in enumerate(self.env.train_env):
+            print(episode.shape)
+            for i, state in enumerate(episode):
 
                 # Add env parameters to the state
                 state = self.env.update(state, self.agent.asset_status, self.agent.bought, self.agent.hold_time)
                 
                 # Take an action
-                self.agent.take_action(state, self.agent.gen_properties(), self.env.train_ask[i], self.env.train_env[i+1], self.env.train_ask[i+1])
+                self.agent.take_action(state, self.agent.gen_properties(), self.env.train_ask[e][i], self.env.train_env[e][i+1], self.env.train_ask[e][i+1])
 
                 # Optimize the agent according to that action
+                #if i%self.agent.BATCH_SIZE == 0:
                 self.agent.optimize_model(self.agent.BATCH_SIZE)
 
                 # Output training info
-                self.agent.report(self.env.train_ask[i], self.env.spread, self.env.offset)
+                self.agent.report(self.env.train_ask[e][i], self.env.spread, self.env.offset)
 
                 # Update target network
                 if self.agent.gain_track > self.agent.TARGET_UPDATE:
