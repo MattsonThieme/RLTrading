@@ -250,7 +250,7 @@ class Agent(object):
         self.gain_track = 1
 
         # Memory
-        self.mem_capacity = 10000
+        self.mem_capacity = 20000
         self.memory = ReplayMemory(self.mem_capacity)
 
         # Financial parameters
@@ -285,7 +285,7 @@ class Agent(object):
         self.EPS_START = 0.9
         self.EPS_END = 0.005
         self.EPS_DECAY = 10000
-        self.TARGET_UPDATE = 200# 3000
+        self.TARGET_UPDATE = 5000# 3000
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
         self.BATCH_SIZE = 1024
@@ -297,21 +297,21 @@ class Agent(object):
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
     def report(self, ask, spread, offset, step, total):
-        if len(self.gains) >= 20:
+        #if len(self.gains) >= 20:
 
-            print("\nGlobal start: ${}, current: :${}  -- ({}/{})".format(round(self.initial_market_value*spread + offset, 2), ask*spread + offset, step, total))
-            print("Market moved ${} over the session".format(round((ask*spread + offset) - self.session_begin_value,2)))
-            print("Start: ${}, current: ${}".format(round(self.initial_market_value*spread + offset,3), round(ask*spread + offset,3)))
-            print("     Session wins: {} @ $ {}, avg hold: {} steps".format(len(self.gains), self.investment_scale*round(sum(self.gains)/len(self.gains),3), round(sum(self.gain_hold)/len(self.gain_hold),0)))
-            print("     Session loss: {} @ ${}, avg hold: {} steps".format(len(self.losses), self.investment_scale*round(sum(self.losses)/len(self.losses),3), round(sum(self.loss_hold)/len(self.loss_hold),0)))
-            print("     Session Net:  ${}".format(round(self.investment_scale*(sum(self.gains) + sum(self.losses)),2)))  # Losses are already negative
-            print("     Episode total: ${}\n\n\n".format(round(self.investment_scale*self.episode_profit,2)))
+        print("\nGlobal start: ${}, current: :${}  -- ({}/{})".format(round(self.initial_market_value*spread + offset, 2), ask*spread + offset, step, total))
+        print("Market moved ${} over the session".format(round((ask*spread + offset) - self.session_begin_value,2)))
+        print("Start: ${}, current: ${}".format(round(self.initial_market_value*spread + offset,3), round(ask*spread + offset,3)))
+        print("     Session wins: {} @ $ {}, avg hold: {} steps".format(len(self.gains), self.investment_scale*round(sum(self.gains)/(len(self.gains)+1),3), round(sum(self.gain_hold)/(len(self.gain_hold)+1),0)))
+        print("     Session loss: {} @ ${}, avg hold: {} steps".format(len(self.losses), self.investment_scale*round(sum(self.losses)/(len(self.losses)+1),3), round(sum(self.loss_hold)/(len(self.loss_hold)+1),0)))
+        print("     Session Net:  ${}".format(round(self.investment_scale*(sum(self.gains) + sum(self.losses)),2)))  # Losses are already negative
+        print("     Episode total: ${}\n\n\n".format(round(self.investment_scale*self.episode_profit,2)))
 
-            self.session_begin_value = ask*spread + offset
-            self.gains = []
-            self.losses = []
-            self.gain_hold = []
-            self.loss_hold = []
+        self.session_begin_value = ask*spread + offset
+        self.gains = []
+        self.losses = []
+        self.gain_hold = []
+        self.loss_hold = []
 
     def gen_properties(self):
         return torch.tensor([self.asset_status, self.bought, 2.0/(self.hold_time+1)-1]).type('torch.FloatTensor')  # 1/self.hold_time because I think the enormous numbers are throwing off the L-network. Scales to [1, -1]
@@ -344,13 +344,16 @@ class Agent(object):
         self.total_steps += 1
         if force_buy == True:
             action = torch.tensor([[0]], device=device, dtype=torch.long)
+            #print("Force bought {}".format(action))
         else:
             if rand > epsilon_threshold:
                 with torch.no_grad():
                     action = self.policy_net(state, properties).max(0)[1].view(1,1)  # Returns the index of the maximum output in a 1x1 tensor
+                    #print("Chose action {}".format(action))
             else:
-                #print("Chose randomly ({})...".format(epsilon_threshold))
+                
                 action = torch.tensor([[random.randrange(self.n_actions)]], device=device, dtype=torch.long)
+                #print("Chose randomly {}, ({})".format(action, epsilon_threshold))
 
         reward = self.reward_calc(action, self.asset_status, self.investment, self.bought, self.hold_time, self.fee, ask)
 
@@ -389,14 +392,14 @@ class Agent(object):
 
             # Selling is illegal
             if action == 2:
-                reward = 0
+                reward = -1
 
         # Money is in an asset
         if self.asset_status == 1:
 
             # Buying is illegal
             if action == 0:
-                reward = 0
+                reward = -1
 
             # Holding is legal, but don't hold forever
             if action == 1:
@@ -442,7 +445,7 @@ class Agent(object):
             # Selling is illegal
             if action == 2:
                 self.hold_time += 1
-                reward = 0
+                reward = -1
 
         # Money is in an asset
         if self.asset_status == 1:
@@ -450,7 +453,7 @@ class Agent(object):
             # Buying is illegal
             if action == 0:
                 self.hold_time += 1
-                reward = 0
+                reward = -1
 
             # Holding is legal, but don't hold forever
             if action == 1:
@@ -470,7 +473,7 @@ class Agent(object):
                 self.episode_profit += reward
 
                 if reward > 0:
-                    print("Gain: $ {}, bought at {}, sold at {} after {} steps".format(round(self.investment_scale*reward,2), round(self.bought,4), round(ask,4), self.hold_time))
+                    #print("Gain: $ {}, bought at {}, sold at {} after {} steps\n".format(round(self.investment_scale*reward,2), round(self.bought,4), round(ask,4), self.hold_time))
                     self.gain_track += 1
                     self.gains.append(reward)
                     self.gain_buy_sell.append((round(self.bought,4), round(ask,4)))
@@ -478,17 +481,17 @@ class Agent(object):
                     self.profit_track.append(reward)
                     
                     # Optimize for highest reward/time
-                    print("Rewa: $ {}".format(reward))
+                    #print("Rewa: $ {}".format(reward))
                     #reward *= 1.3*np.exp(-0.5*(self.hold_time/60)**2)  # Another magic number, start disincentivizing rewards after ~17 minutes
                     #reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
                     #if self.hold_time > 50:
                     #    reward *= -1
                     reward = reward*10/self.hold_time  # Magic numbers, I know, will fix later
-                    print("Rewa: $ {}\n".format(reward))
+                    #print("Rewa: $ {}\n".format(reward))
 
 
                 if reward <= 0:
-                    print("Loss: ${}, bought at {}, sold at {} after {} steps".format(round(self.investment_scale*reward,2), round(self.bought,4), round(ask,4), self.hold_time))
+                    #print("Loss: ${}, bought at {}, sold at {} after {} steps\n".format(round(self.investment_scale*reward,2), round(self.bought,4), round(ask,4), self.hold_time))
                     self.losses.append(reward)
                     self.loss_buy_sell.append((round(self.bought,4), round(ask,4)))
                     self.loss_hold.append(self.hold_time)
@@ -496,9 +499,9 @@ class Agent(object):
                     #reward *= np.log(2*self.hold_time)  # Penalize model for holding onto a losing trade proportional to the time it holds on
 
                     # Optimize for highest reward/time
-                    print("Rewa: ${}".format(reward))
+                    #print("Rewa: ${}".format(reward))
                     reward = reward*(1 + self.hold_time/10)
-                    print("Rewa: ${}\n".format(reward))
+                    #print("Rewa: ${}\n".format(reward))
 
                 self.hold_time = 0
 
@@ -591,17 +594,19 @@ class execute(object):
                 self.simulate(state, i, e, episode)
 
                 # Optimize the agent according to that action
-                if i%10 == 0:
-                    #print("Optimizing...")
+                if i%100 == 0:
+                    print("Optimizing...")
                     self.agent.optimize_model(self.agent.BATCH_SIZE)
 
                 # Output training info
-                self.agent.report(self.env.train_ask[e][i], self.env.spread, self.env.offset, i, episode.shape[0])
+                #self.agent.report(self.env.train_ask[e][i], self.env.spread, self.env.offset, i, episode.shape[0])
+                if i%1000 == 0:
+                    print("{}/{} complete with episode {}".format(i, episode.shape[0], e))
+                    self.validation(e, i, episode, length = 1000)
 
                 # Update target network
-                if i%self.agent.TARGET_UPDATE:
-                    self.agent.gain_track = 0
-                    #print("Updating target net...({}/{})".format(i, episode.shape[0]))
+                if i%self.agent.TARGET_UPDATE == 0:
+                    print("Updating target net...({}/{})".format(i, episode.shape[0]))
                     self.agent.target_net.load_state_dict(self.agent.policy_net.state_dict())
             
             print("#"*30)
@@ -614,32 +619,53 @@ class execute(object):
     # Roll out forward, assign final reward to all states in the rollout between 'buy' and 'sell'
     def simulate(self, state, i, e, episode):
 
-        # Force model to buy at 'state'
-
+        # Store transitions over each simulation
         trans = []  # storing all transitions in this rollout
 
+        # Force model to buy at 'state'
         trans.append(self.agent.take_action(state, self.agent.gen_properties(), self.env.train_ask[e][i], self.env.train_env[e][i+1], self.env.train_ask[e][i+1], force_buy=True))
 
         steps = 0  # steps after the current force_buy
         while self.agent.asset_status != 0:
-
             trans.append(self.agent.take_action(episode[i+steps], self.agent.gen_properties(), self.env.train_ask[e][i+steps], self.env.train_env[e][i+1+steps], self.env.train_ask[e][i+1+steps], force_buy=False))
             steps += 1
 
+        # Sketchy reward engineering incoming...
         final_reward = trans[-1][3]  # Reward from final sale
         for t in trans:
-            state = t[0]
+            state_ = t[0]
             properties = t[1]
             action = t[2]
-            reward = final_reward
+            if t[3] == -1:
+                reward = t[3]  # Allow the negative reward if the action is illegal
+                #print("Illegal")
+            else:
+                reward = final_reward  # Otherwise, give all the actions in that "trade cycle" the value of the final trade
+                if action == 1:  # Reduce reward for intermediate 'hold' states so we don't mazimize hold time to maximize reward
+                    #print("hold reward old: {}, new: {}".format(reward, reward/10))
+                    reward /= 10
+            
             target = t[4]
             next_reward = t[5]
 
-            self.agent.memory.push(state, properties, action, reward, target, next_reward)
+            self.agent.memory.push(state_, properties, action, reward, target, next_reward)
 
 
-    def validation(self):
-        raise NotImplementedError
+
+    def validation(self, e, i, episode, length):
+
+        start = random.randint(0, episode.shape[0] - length - 2)
+        end = start + length
+        data = episode[start:end]
+        print("Validation [{},{}]".format(start, end))
+        self.agent.reset()
+        self.env.reset()
+        for s, state in enumerate(episode[start:end]):
+            self.agent.take_action(state, self.agent.gen_properties(), self.env.train_ask[e][s], self.env.train_env[e][s+1], self.env.train_ask[e][s+1], force_buy=False)
+
+        self.agent.report(self.env.train_ask[e][i], self.env.spread, self.env.offset, s, episode.shape[0])
+        self.agent.reset()
+        self.env.reset()
 
 # TODO: Add some parameters here so it's easier to prototype
 investment = 1
