@@ -390,14 +390,14 @@ class Agent(object):
 
             # Selling is illegal
             if action == 2:
-                reward = 0
+                reward = -1
 
         # Money is in an asset
         if self.asset_status == 1:
 
             # Buying is illegal
             if action == 0:
-                reward = 0
+                reward = -1
 
             # Holding is legal, but don't hold forever
             if action == 1:
@@ -415,7 +415,7 @@ class Agent(object):
                     #reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
                     #if self.hold_time > 50:
                     #    reward *= -1
-                    reward = reward*10/self.hold_time  # Magic numbers, I know, will fix later
+                    reward = reward*10/self.hold_time  # Increase value at < 20 steps, decrease after 20. Magic numbers, I know, will fix later
                 if reward <= 0:
                     reward = reward*(1 + self.hold_time/10)
             
@@ -443,7 +443,7 @@ class Agent(object):
             # Selling is illegal
             if action == 2:
                 self.hold_time += 1
-                reward = 0
+                reward = -1
 
         # Money is in an asset
         if self.asset_status == 1:
