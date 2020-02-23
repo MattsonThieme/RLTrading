@@ -483,7 +483,7 @@ class Agent(object):
                     #reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
                     #if self.hold_time > 50:
                     #    reward *= -1
-                    reward = reward/self.hold_time
+                    reward = reward/self.hold_time 
                     print("Rewa: $ {}\n".format(reward))
 
 
