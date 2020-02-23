@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from collections import namedtuple
 import csv
 from itertools import islice
+import datetime
 
 import torch
 import torch.nn as nn
@@ -112,7 +113,7 @@ class Env(object):
         self.bought = 0
         self.hold_time = 0
 
-        self.num_episodes = 1
+        self.num_episodes = 1  # Somewhat defunct with new data-loader, but will keep for now
         self.train_params = params  # ['ask']
         self.train_env = None
         self.train_ask = None
@@ -120,7 +121,14 @@ class Env(object):
         # Normalization/conversion
         self.spread = None
         self.offset = None
-        
+    
+    def reset(self):
+        # Initial environment parameters
+        self.asset_status = 0
+        self.bought = 0
+        self.hold_time = 0
+
+
     def load_data(self):
         try:
             self.train_env = torch.load('{}_ask_p{}s_l{}m_env.pt'.format(self.assets, self.train_period, self.minutes_back))
@@ -130,14 +138,6 @@ class Env(object):
             self.train_env, self.train_ask = self.parse_data(self.data_path, self.train_length, self.train_params, self.train_period)
             torch.save(self.train_env, '{}_ask_p{}s_l{}m_env.pt'.format(self.assets, self.train_period, self.minutes_back))
             torch.save(self.train_ask, '{}_ask_p{}s_l{}m_ask.pt'.format(self.assets, self.train_period, self.minutes_back))
-
-    # Return the next state, adding necessary environmental parameters
-    def update(self, state, asset_status, bought, hold_time):
-        # Add the current asset status and bought value to the state to the state
-        #state = torch.cat((torch.tensor([asset_status]).type('torch.FloatTensor'), state), 0).to(device)
-        #state = torch.cat((torch.tensor([bought]).type('torch.FloatTensor'), state), 0).to(device)
-        #state = torch.cat((torch.tensor([hold_time]).type('torch.FloatTensor'), state), 0).to(device)
-        return state
 
     def normalize(self):
         # Normalize train_env/ask to [-1,1]
@@ -250,7 +250,7 @@ class Agent(object):
         self.gain_track = 1
 
         # Memory
-        self.mem_capacity = 10000 
+        self.mem_capacity = 10000
         self.memory = ReplayMemory(self.mem_capacity)
 
         # Financial parameters
@@ -284,11 +284,11 @@ class Agent(object):
         self.GAMMA = 0.999
         self.EPS_START = 0.9
         self.EPS_END = 0.001
-        self.EPS_DECAY = 2000
-        self.TARGET_UPDATE = 20
+        self.EPS_DECAY = 10000
+        self.TARGET_UPDATE = 200# 3000
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
-        self.BATCH_SIZE = 64
+        self.BATCH_SIZE = 1024
         self.hold_penalty = np.inf  # Encourage the model to trade more quickly (hold_time/hold_penalty)
         self.max_reward_multiplier = 2
         self.reward_turning_point = 160  # 40 mins at 15s period
@@ -314,8 +314,27 @@ class Agent(object):
             self.loss_hold = []
 
     def gen_properties(self):
-        return torch.tensor([self.asset_status, self.bought, self.hold_time]).type('torch.FloatTensor')
+        return torch.tensor([self.asset_status, 2.0/(self.bought+1)-1, self.hold_time]).type('torch.FloatTensor')  # 1/bought because I think the enormous numbers are throwing off the L-network
 
+
+    def reset(self):
+        # State parameters
+        self.asset_status = 0
+        self.bought = 0
+        self.hold_time = 0
+        self.gain_track = 1
+
+        # Financial parameters
+        self.losses = []
+        self.gains = []
+        self.episode_profit = 0
+        self.profit_track = []
+        self.initial_market_value = 0
+        self.session_begin_value = 0
+        self.gain_buy_sell = []
+        self.loss_buy_sell = []
+        self.gain_hold = []
+        self.loss_hold = []
 
     # Return asset status, bought value, 
     def take_action(self, state, properties, ask, next_env, next_ask):
@@ -392,7 +411,10 @@ class Agent(object):
                 reward = sold_revenue - sell_cost - buy_cost - self.investment
 
                 if reward > 0:
-                    reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
+                    #reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
+                    #if self.hold_time > 50:
+                    #    reward *= -1
+                    reward = reward/self.hold_time
                 else:
                     reward = reward
             
@@ -458,7 +480,10 @@ class Agent(object):
                     # Optimize for highest reward/time
                     print("Rewa: $ {}".format(reward))
                     #reward *= 1.3*np.exp(-0.5*(self.hold_time/60)**2)  # Another magic number, start disincentivizing rewards after ~17 minutes
-                    reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
+                    #reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
+                    #if self.hold_time > 50:
+                    #    reward *= -1
+                    reward = reward/self.hold_time
                     print("Rewa: $ {}\n".format(reward))
 
 
@@ -483,6 +508,8 @@ class Agent(object):
 
         if self.memory._len() < BATCH_SIZE:
             return
+
+        print("memory length: ", self.memory._len())
 
         transitions = self.memory.sample(BATCH_SIZE)
 
@@ -549,37 +576,40 @@ class execute(object):
 
     def trade(self):
         # Iterate over states
-
-        print("Len env: ", len(self.env.train_env))
-
         for e, episode in enumerate(self.env.train_env):
-            print(episode.shape)
-            for i, state in enumerate(episode):
 
-                # Add env parameters to the state
-                state = self.env.update(state, self.agent.asset_status, self.agent.bought, self.agent.hold_time)
-                
+            # Reset environments with each episode
+            self.agent.reset()
+            self.env.reset()
+            
+            for i, state in enumerate(episode[:episode.shape[0]-1]):
+
                 # Take an action
                 self.agent.take_action(state, self.agent.gen_properties(), self.env.train_ask[e][i], self.env.train_env[e][i+1], self.env.train_ask[e][i+1])
 
                 # Optimize the agent according to that action
-                #if i%self.agent.BATCH_SIZE == 0:
-                self.agent.optimize_model(self.agent.BATCH_SIZE)
+                if i%4 == 0:
+                    #print("Optimizing...")
+                    self.agent.optimize_model(self.agent.BATCH_SIZE)
 
                 # Output training info
                 self.agent.report(self.env.train_ask[e][i], self.env.spread, self.env.offset)
 
                 # Update target network
-                if self.agent.gain_track > self.agent.TARGET_UPDATE:
+                if i%self.agent.TARGET_UPDATE:
                     self.agent.gain_track = 0
                     print("Updating target net...")
                     self.agent.target_net.load_state_dict(self.agent.policy_net.state_dict())
-        
-        # Save policy every episode
-        torch.save(self.agent.policy_net.state_dict(),"saved_policy_{}_{}.pt".format('ETH',datetime.datetime.now()))
+            
+            print("#"*30)
+            print("\nCompleted episode {} of {}\n".format(e, self.env.train_env.shape[0]))
+            print("#"*30)
+
+            # Save policy every episode
+            torch.save(self.agent.policy_net.state_dict(),"{}_policy.pt".format(self.asset))
 
 
-# Add some parameters here so it's easier to prototype
+# TODO: Add some parameters here so it's easier to prototype
 investment = 1
 model = 'lstm'
 
