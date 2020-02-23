@@ -49,36 +49,41 @@ class LSTM(nn.Module):
         # Legality network
         prop_length = properties.size()[0]
         dec_size = 8  # Size of the final embedding, try some diff vals
-        self.ln1 = nn.Linear(prop_length, 32)
-        self.ln2 = nn.Linear(32, dec_size)
+        self.ln1 = nn.Linear(prop_length, 128)
+        self.LLn1 = nn.LayerNorm(128)
+        self.ln2 = nn.Linear(128, 64)
+        self.LLn2 = nn.LayerNorm(64)
+        self.ln3 = nn.Linear(64, dec_size)
 
         # Decision network
         self.output_dim = 3
         self.dn1 = nn.Linear(dec_size+hidden_dim, 100)
+        self.DLn1 = nn.LayerNorm(100)
         self.dn2 = nn.Linear(100, 50)
+        self.Ld1 = nn.AlphaDropout(p=0.2)
+        self.DLn2 = nn.LayerNorm(50)
         self.dn3 = nn.Linear(50, self.output_dim)
 
     def forward(self, x, properties):
         inp = x.clone()
-        #prop = properties.clone()
         # Handle various batch sizes between regular state vs. transition history - not very elegant, but it works
         if len(inp.shape) == 1:
             inp.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim] - needed for LSTM
         else:
             inp.unsqueeze_(0)
         self.out, self.hidden = self.lstm_layer(inp, self.hidden)
-        #x.squeeze(0).squeeze(0)
 
-        legal = F.relu(self.ln1(properties))
-        legal = F.relu(self.ln2(legal))
+        legal = F.relu(self.LLn1(self.ln1(properties)))
+        legal = F.relu(self.LLn2(self.ln2(legal)))
+        legal = F.relu(self.ln3(legal))
 
         # Decision network
         if self.out.shape[1] == 1:
             ind = torch.cat((legal, self.out.squeeze(0).squeeze(0)),0).to(device)  # Squeeze out tensor to recast to [hidden_dim]
         else:
             ind = torch.cat((self.out, legal.unsqueeze(0)),2).squeeze(0).to(device)  # Cat batches
-        dec = F.relu(self.dn1(ind))
-        dec = F.relu(self.dn2(dec))
+        dec = F.relu(self.Ld1(self.DLn1(self.dn1(ind))))
+        dec = F.relu(self.DLn2(self.dn2(dec)))
 
         return self.dn3(dec)
 
@@ -283,7 +288,7 @@ class Agent(object):
         # Learning parameters
         self.GAMMA = 0.999
         self.EPS_START = 0.9
-        self.EPS_END = 0.001
+        self.EPS_END = 0.005
         self.EPS_DECAY = 10000
         self.TARGET_UPDATE = 200# 3000
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
@@ -353,10 +358,6 @@ class Agent(object):
 
         # Calculate target values
         target = next_env
-        # Add the current asset status and bought value to the next
-        #target = torch.cat((torch.tensor([self.asset_status]).type('torch.FloatTensor'), target), 0).to(device)
-        #target = torch.cat((torch.tensor([self.bought]).type('torch.FloatTensor'), target), 0).to(device)
-        #target = torch.cat((torch.tensor([self.hold_time]).type('torch.FloatTensor'), target), 0).to(device)
 
         # Push memory into buffer
         next_properties = self.gen_properties()
@@ -389,14 +390,14 @@ class Agent(object):
 
             # Selling is illegal
             if action == 2:
-                reward = -1
+                reward = 0
 
         # Money is in an asset
         if self.asset_status == 1:
 
             # Buying is illegal
             if action == 0:
-                reward = -1
+                reward = 0
 
             # Holding is legal, but don't hold forever
             if action == 1:
@@ -414,7 +415,7 @@ class Agent(object):
                     #reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
                     #if self.hold_time > 50:
                     #    reward *= -1
-                    reward = reward/self.hold_time
+                    reward = reward*10/self.hold_time  # Magic numbers, I know, will fix later
                 if reward <= 0:
                     reward = reward*(1 + self.hold_time/10)
             
@@ -432,7 +433,7 @@ class Agent(object):
             if action == 0:
                 self.bought = ask
                 self.asset_status = 1  # Money is now in the asset
-                reward = 0
+                reward = -1
 
             # Holding is legal, but don't hold forever
             if action == 1:
@@ -442,7 +443,7 @@ class Agent(object):
             # Selling is illegal
             if action == 2:
                 self.hold_time += 1
-                reward = -1
+                reward = 0
 
         # Money is in an asset
         if self.asset_status == 1:
@@ -483,7 +484,7 @@ class Agent(object):
                     #reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
                     #if self.hold_time > 50:
                     #    reward *= -1
-                    reward = reward/self.hold_time 
+                    reward = reward*10/self.hold_time  # Magic numbers, I know, will fix later
                     print("Rewa: $ {}\n".format(reward))
 
 
@@ -588,7 +589,7 @@ class execute(object):
                 self.agent.take_action(state, self.agent.gen_properties(), self.env.train_ask[e][i], self.env.train_env[e][i+1], self.env.train_ask[e][i+1])
 
                 # Optimize the agent according to that action
-                if i%4 == 0:
+                if i%10 == 0:
                     #print("Optimizing...")
                     self.agent.optimize_model(self.agent.BATCH_SIZE)
 
