@@ -296,10 +296,10 @@ class Agent(object):
     def update_target(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
-    def report(self, ask, spread, offset):
+    def report(self, ask, spread, offset, step, total):
         if len(self.gains) >= 20:
 
-            print("\nGlobal start: ${}, current: :${}".format(round(self.initial_market_value*spread + offset, 2), ask*spread + offset))
+            print("\nGlobal start: ${}, current: :${}  -- ({}/{})".format(round(self.initial_market_value*spread + offset, 2), ask*spread + offset, step, total))
             print("Market moved ${} over the session".format(round((ask*spread + offset) - self.session_begin_value,2)))
             print("Start: ${}, current: ${}".format(round(self.initial_market_value*spread + offset,3), round(ask*spread + offset,3)))
             print("     Session wins: {} @ $ {}, avg hold: {} steps".format(len(self.gains), self.investment_scale*round(sum(self.gains)/len(self.gains),3), round(sum(self.gain_hold)/len(self.gain_hold),0)))
@@ -314,7 +314,7 @@ class Agent(object):
             self.loss_hold = []
 
     def gen_properties(self):
-        return torch.tensor([self.asset_status, 2.0/(self.bought+1)-1, self.hold_time]).type('torch.FloatTensor')  # 1/bought because I think the enormous numbers are throwing off the L-network
+        return torch.tensor([self.asset_status, self.bought, 2.0/(self.hold_time+1)-1]).type('torch.FloatTensor')  # 1/bought because I think the enormous numbers are throwing off the L-network
 
 
     def reset(self):
@@ -415,8 +415,8 @@ class Agent(object):
                     #if self.hold_time > 50:
                     #    reward *= -1
                     reward = reward/self.hold_time
-                else:
-                    reward = reward
+                if reward <= 0:
+                    reward = reward*(1 + self.hold_time/10)
             
         
         return torch.tensor([reward]).type('torch.FloatTensor')
@@ -497,7 +497,7 @@ class Agent(object):
 
                     # Optimize for highest reward/time
                     print("Rewa: ${}".format(reward))
-                    reward = reward
+                    reward = reward*(1 + self.hold_time/10)
                     print("Rewa: ${}\n".format(reward))
 
                 self.hold_time = 0
@@ -508,8 +508,6 @@ class Agent(object):
 
         if self.memory._len() < BATCH_SIZE:
             return
-
-        print("memory length: ", self.memory._len())
 
         transitions = self.memory.sample(BATCH_SIZE)
 
@@ -578,6 +576,8 @@ class execute(object):
         # Iterate over states
         for e, episode in enumerate(self.env.train_env):
 
+            torch.save(self.agent.policy_net.state_dict(),"{}_policy_{}p_{}m_{}.pt".format(self.asset, self.period, self.minutes_back, datetime.datetime.now()))
+
             # Reset environments with each episode
             self.agent.reset()
             self.env.reset()
@@ -593,12 +593,12 @@ class execute(object):
                     self.agent.optimize_model(self.agent.BATCH_SIZE)
 
                 # Output training info
-                self.agent.report(self.env.train_ask[e][i], self.env.spread, self.env.offset)
+                self.agent.report(self.env.train_ask[e][i], self.env.spread, self.env.offset, i, episode.shape[0])
 
                 # Update target network
                 if i%self.agent.TARGET_UPDATE:
                     self.agent.gain_track = 0
-                    print("Updating target net...")
+                    #print("Updating target net...({}/{})".format(i, episode.shape[0]))
                     self.agent.target_net.load_state_dict(self.agent.policy_net.state_dict())
             
             print("#"*30)
@@ -606,7 +606,7 @@ class execute(object):
             print("#"*30)
 
             # Save policy every episode
-            torch.save(self.agent.policy_net.state_dict(),"{}_policy.pt".format(self.asset))
+            torch.save(self.agent.policy_net.state_dict(),"{}_policy_{}p_{}m.pt".format(self.asset, self.period, self.minutes_back))
 
 
 # TODO: Add some parameters here so it's easier to prototype
