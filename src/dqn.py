@@ -314,7 +314,7 @@ class Agent(object):
             self.loss_hold = []
 
     def gen_properties(self):
-        return torch.tensor([self.asset_status, self.bought, 2.0/(self.hold_time+1)-1]).type('torch.FloatTensor')  # 1/bought because I think the enormous numbers are throwing off the L-network
+        return torch.tensor([self.asset_status, self.bought, 2.0/(self.hold_time+1)-1]).type('torch.FloatTensor')  # 1/self.hold_time because I think the enormous numbers are throwing off the L-network. Scales to [1, -1]
 
 
     def reset(self):
@@ -389,14 +389,14 @@ class Agent(object):
 
             # Selling is illegal
             if action == 2:
-                reward = -100
+                reward = -1
 
         # Money is in an asset
         if self.asset_status == 1:
 
             # Buying is illegal
             if action == 0:
-                reward = -100
+                reward = -1
 
             # Holding is legal, but don't hold forever
             if action == 1:
@@ -442,7 +442,7 @@ class Agent(object):
             # Selling is illegal
             if action == 2:
                 self.hold_time += 1
-                reward = -100
+                reward = -1
 
         # Money is in an asset
         if self.asset_status == 1:
@@ -450,7 +450,7 @@ class Agent(object):
             # Buying is illegal
             if action == 0:
                 self.hold_time += 1
-                reward = -100
+                reward = -1
 
             # Holding is legal, but don't hold forever
             if action == 1:
