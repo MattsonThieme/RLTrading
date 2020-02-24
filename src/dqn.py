@@ -274,6 +274,7 @@ class Agent(object):
         self.loss_buy_sell = []
         self.gain_hold = []
         self.loss_hold = []
+        self.last_ask = 0
 
         if policy == 'mlp':
             self.policy_net = DQN(self.input_dimension, self.n_actions).to(device)
@@ -297,10 +298,10 @@ class Agent(object):
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
         self.BATCH_SIZE = 1024
-        self.hold_penalty = np.inf  # Encourage the model to trade more quickly (hold_time/hold_penalty)
+        self.hold_penalty = 100  # How long do we want to hold a falling asset?
         self.max_reward_multiplier = 2
         self.reward_turning_point = 160  # 40 mins at 15s period
-        self.reward_multiplier = 50  # Rewards are pretty sparse, we want to pump them up a bit
+        self.reward_multiplier = 100  # Rewards are pretty sparse, we want to pump them up a bit
 
     def update_target(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -350,7 +351,7 @@ class Agent(object):
         self.loss_hold = []
 
     # Return asset status, bought value, 
-    def take_action(self, state, properties, ask, next_env, next_ask):
+    def take_action(self, state, properties, last_ask, ask, next_env, next_ask):
         
         rand = random.random()
         epsilon_threshold = self.EPS_END + (self.EPS_START - self.EPS_END)*math.exp(-1. * self.total_steps/self.EPS_DECAY)
@@ -381,6 +382,22 @@ class Agent(object):
         
         self.memory.push(state, properties, action, reward, target, next_reward)
 
+
+    def profit(self, ask):
+        buy_cost = self.investment*self.fee
+        bought_shares = (self.investment - buy_cost)/self.bought
+        sold_revenue = bought_shares*ask
+        sell_cost = sold_revenue*self.fee
+        reward = sold_revenue - sell_cost - buy_cost - self.investment
+        return reward
+
+    def slope(self, last_ask, ask):
+        return ask - last_ask
+
+    ## WARNING: Sketchy reward engineering ahead...
+
+    ## Could give reward in proportion to the slope. Positive reward for holding on a positive slope, negative for holding on a negative slope
+
     # This separate calculator exists so we don't update the agen't state with the target reward calculation. Not ideal...
     def target_reward_calc(self, action, asset_status, investment, bought, hold_time, fee, ask):
 
@@ -394,7 +411,7 @@ class Agent(object):
 
             # Holding is legal, but don't hold forever
             if action == 1:
-                reward = -self.hold_time/self.hold_penalty
+                reward = -1*self.hold_time/self.hold_penalty
 
             # Selling is illegal
             if action == 2:
@@ -407,28 +424,32 @@ class Agent(object):
             if action == 0:
                 reward = -1
 
-            # Holding is legal, but don't hold forever
+            # Cost of holding is the opportunity cost of not selling
             if action == 1:
-                reward = -self.hold_time/self.hold_penalty
+                if self.slope(self.last_ask, ask) > 0:
+                    reward = self.profit(ask)
+                else:
+                    reward = -1*self.profit(ask)  #-self.hold_time/self.hold_penalty  # If we bought at a bad time, penalize holding an asset with falling value
 
             # Selling is legal
             if action == 2:
-                buy_cost = self.investment*self.fee
-                bought_shares = (self.investment - buy_cost)/self.bought
-                sold_revenue = bought_shares*ask
-                sell_cost = sold_revenue*self.fee
-                reward = sold_revenue - sell_cost - buy_cost - self.investment
+                reward = self.profit(ask)
 
                 if reward > 0:
                     #reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
                     #if self.hold_time > 50:
                     #    reward *= -1
-                    reward = reward*self.reward_multiplier/self.hold_time  # Increase value at < 20 steps, decrease after 20. Magic numbers, I know, will fix later
+                    if self.hold_time > self.reward_multiplier:
+                        reward = reward
+                    else:
+                        reward = reward*self.reward_multiplier/self.hold_time  # Increase value at < reward_multiplier time steps
                 if reward <= 0:
                     reward = reward*(1 + self.hold_time/10)
             
         
         return torch.tensor([reward]).type('torch.FloatTensor')
+
+
 
     ### Try incentivising it to sell sooner. It's starting to hold for a long time
     ### Try making the reward the total value, not just the immediate value
@@ -461,21 +482,20 @@ class Agent(object):
                 self.hold_time += 1
                 reward = -1
 
-            # Holding is legal, but don't hold forever
+            # Cost of holding is the opportunity cost of not selling
             if action == 1:
-                self.hold_time += 1
-                reward = -self.hold_time/self.hold_penalty
+
+                if self.slope(self.last_ask, ask) > 0:
+                    reward = self.profit(ask)
+                else:
+                    reward = -1*self.profit(ask)  #-self.hold_time/self.hold_penalty  # If we bought at a bad time, penalize holding an asset with falling value
+                
 
             # Selling is legal
             if action == 2:
                 self.asset_status = 0  # Money is back in our wallet
                 
-
-                buy_cost = self.investment*self.fee
-                bought_shares = (self.investment - buy_cost)/self.bought
-                sold_revenue = bought_shares*ask
-                sell_cost = sold_revenue*self.fee
-                reward = sold_revenue - sell_cost - buy_cost - self.investment
+                reward = self.profit(ask)
                 self.episode_profit += reward
 
                 if reward > 0:
@@ -492,7 +512,10 @@ class Agent(object):
                     #reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
                     #if self.hold_time > 50:
                     #    reward *= -1
-                    reward = reward*self.reward_multiplier/self.hold_time  # Magic numbers, I know, will fix later
+                    if self.hold_time > self.reward_multiplier:  # Let the reward stand if its greater than reward_multiplier, I just want to incentivize quicker trades
+                        reward = reward
+                    else:
+                        reward = reward*self.reward_multiplier/self.hold_time  # Increase value at < reward_multiplier time steps
                     print("Rewa: $ {}\n".format(reward))
 
 
@@ -552,6 +575,7 @@ class Agent(object):
 
         self.optimizer.zero_grad()
         loss.backward(retain_graph=True)
+        # Don't want to do this because some trades are better than others and we want the network updates to reflect that
         #for param in self.policy_net.parameters():  # restrict grad updates to (-1,1)
         #    param.grad.data.clamp_(-1,1)
         self.optimizer.step()
@@ -581,20 +605,27 @@ class execute(object):
         self.agent = Agent('lstm', self.env.train_env[0][0].size()[0])
         self.agent.initial_market_value = self.env.train_ask[0]
 
+
     def trade(self):
         # Iterate over states
         for e, episode in enumerate(self.env.train_env):
 
             torch.save(self.agent.policy_net.state_dict(),"{}_policy_{}p_{}m_{}.pt".format(self.asset, self.period, self.minutes_back, datetime.datetime.now()))
-
+            
+            self.agent.last_ask = self.env.train_ask[e][0]
+            print("Last ask: ", self.agent.last_ask)
             # Reset environments with each episode
             self.agent.reset()
             self.env.reset()
             
             for i, state in enumerate(episode[:episode.shape[0]-1]):
 
+                ask = self.env.train_ask[e][i]
+                next_ask = self.env.train_ask[e][i+1]
+                next_state = self.env.train_env[e][i+1]
+
                 # Take an action
-                self.agent.take_action(state, self.agent.gen_properties(), self.env.train_ask[e][i], self.env.train_env[e][i+1], self.env.train_ask[e][i+1])
+                self.agent.take_action(state, self.agent.gen_properties(), self.agent.last_ask, ask, next_state, next_ask)
 
                 # Optimize the agent according to that action
                 if i%self.agent.POLICY_UPDATE == 0:
@@ -602,7 +633,7 @@ class execute(object):
                     self.agent.optimize_model(self.agent.BATCH_SIZE)
 
                 # Output training info
-                self.agent.report(self.env.train_ask[e][i], self.env.spread, self.env.offset, i, episode.shape[0], last=False)
+                self.agent.report(ask, self.env.spread, self.env.offset, i, episode.shape[0], last=False)
 
                 # Update target network
                 if i%self.agent.TARGET_UPDATE:
@@ -610,6 +641,8 @@ class execute(object):
                     #print("Updating target net...({}/{})".format(i, episode.shape[0]))
                     self.agent.target_net.load_state_dict(self.agent.policy_net.state_dict())
             
+                self.agent.last_ask = ask
+
             # Output training info
             self.agent.report(self.env.train_ask[e][i], self.env.spread, self.env.offset, i, episode.shape[0], last=True)  # Show the final result at the end of the episode
             print("#"*30)
