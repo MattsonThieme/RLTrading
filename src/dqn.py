@@ -145,18 +145,20 @@ class Env(object):
             torch.save(self.train_ask, '{}_ask_p{}s_l{}m_ask.pt'.format(self.assets, self.train_period, self.minutes_back))
 
     def normalize(self):
-        # Normalize train_env/ask to [-1,1]
+        # Normalize train_env/ask to [0,1]
         max_val = 0
         min_val = np.inf
         for i in self.train_ask:
             max_val = max(max(i), max_val)
             min_val = min(min(i), min_val)
 
+        print("Normalizing to {}".format(max_val))
         self.spread = max_val - min_val#max(self.train_ask) - min(self.train_ask)
         self.offset = min_val
-        self.train_env = (self.train_env - self.offset)/(self.spread)
-        self.train_ask = (self.train_ask - self.offset)/(self.spread)
-
+        #self.train_env = (self.train_env - self.offset)/(self.spread)
+        #self.train_ask = (self.train_ask - self.offset)/(self.spread)
+        self.train_env = self.train_env/max_val
+        self.train_ask = self.train_ask/max_val
     # Returns two values
     # 1) train_environment: a list train_length*#params long corresponding to a history of train_length at each period interval
     # 2) env_value: a list of floats corresponding to the ask value at the current timestep
@@ -291,18 +293,20 @@ class Agent(object):
         self.EPS_END = 0.005
         self.EPS_DECAY = 10000
         self.TARGET_UPDATE = 200# 3000
+        self.POLICY_UPDATE = 10  # Will update this actively in report (for now)
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
         self.BATCH_SIZE = 1024
         self.hold_penalty = np.inf  # Encourage the model to trade more quickly (hold_time/hold_penalty)
         self.max_reward_multiplier = 2
         self.reward_turning_point = 160  # 40 mins at 15s period
+        self.reward_multiplier = 50  # Rewards are pretty sparse, we want to pump them up a bit
 
     def update_target(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
-    def report(self, ask, spread, offset, step, total):
-        if len(self.gains) >= 20:
+    def report(self, ask, spread, offset, step, total, last):
+        if (len(self.gains) >= 20) or (last):
 
             print("\nGlobal start: ${}, current: :${}  -- ({}/{})".format(round(self.initial_market_value*spread + offset, 2), ask*spread + offset, step, total))
             print("Market moved ${} over the session".format(round((ask*spread + offset) - self.session_begin_value,2)))
@@ -312,6 +316,10 @@ class Agent(object):
             print("     Session Net:  ${}".format(round(self.investment_scale*(sum(self.gains) + sum(self.losses)),2)))  # Losses are already negative
             print("     Episode total: ${}\n\n\n".format(round(self.investment_scale*self.episode_profit,2)))
 
+            #if self.investment_scale*(sum(self.gains) + sum(self.losses)) > 50:
+            #    self.POLICY_UPDATE += 10
+            #    self.TARGET_UPDATE += 10
+            #    print("New policy_update: {}, Target update: {}".format(self.POLICY_UPDATE, self.TARGET_UPDATE))
             self.session_begin_value = ask*spread + offset
             self.gains = []
             self.losses = []
@@ -415,7 +423,7 @@ class Agent(object):
                     #reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
                     #if self.hold_time > 50:
                     #    reward *= -1
-                    reward = reward*10/self.hold_time  # Increase value at < 20 steps, decrease after 20. Magic numbers, I know, will fix later
+                    reward = reward*self.reward_multiplier/self.hold_time  # Increase value at < 20 steps, decrease after 20. Magic numbers, I know, will fix later
                 if reward <= 0:
                     reward = reward*(1 + self.hold_time/10)
             
@@ -484,7 +492,7 @@ class Agent(object):
                     #reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
                     #if self.hold_time > 50:
                     #    reward *= -1
-                    reward = reward*10/self.hold_time  # Magic numbers, I know, will fix later
+                    reward = reward*self.reward_multiplier/self.hold_time  # Magic numbers, I know, will fix later
                     print("Rewa: $ {}\n".format(reward))
 
 
@@ -589,12 +597,12 @@ class execute(object):
                 self.agent.take_action(state, self.agent.gen_properties(), self.env.train_ask[e][i], self.env.train_env[e][i+1], self.env.train_ask[e][i+1])
 
                 # Optimize the agent according to that action
-                if i%10 == 0:
+                if i%self.agent.POLICY_UPDATE == 0:
                     #print("Optimizing...")
                     self.agent.optimize_model(self.agent.BATCH_SIZE)
 
                 # Output training info
-                self.agent.report(self.env.train_ask[e][i], self.env.spread, self.env.offset, i, episode.shape[0])
+                self.agent.report(self.env.train_ask[e][i], self.env.spread, self.env.offset, i, episode.shape[0], last=False)
 
                 # Update target network
                 if i%self.agent.TARGET_UPDATE:
@@ -602,6 +610,8 @@ class execute(object):
                     #print("Updating target net...({}/{})".format(i, episode.shape[0]))
                     self.agent.target_net.load_state_dict(self.agent.policy_net.state_dict())
             
+            # Output training info
+            self.agent.report(self.env.train_ask[e][i], self.env.spread, self.env.offset, i, episode.shape[0], last=True)  # Show the final result at the end of the episode
             print("#"*30)
             print("\nCompleted episode {} of {}\n".format(e, self.env.train_env.shape[0]))
             print("#"*30)
