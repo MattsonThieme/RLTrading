@@ -298,7 +298,7 @@ class Agent(object):
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
         self.BATCH_SIZE = 1024
-        self.hold_penalty = 100  # How long do we want to hold a falling asset?
+        self.hold_penalty = np.inf  # How long do we want to hold a falling asset?
         self.max_reward_multiplier = 2
         self.reward_turning_point = 160  # 40 mins at 15s period
         self.reward_multiplier = 100  # Rewards are pretty sparse, we want to pump them up a bit
