@@ -12,6 +12,8 @@
 # Try rewarding it with the episode reward - maybe we're putting too much emphasis on individual trades
 # Would need to increase the EPS_DECAY way up, such that we have dozens or hundreds of trips through the entire dataset with a good bit of randomness
 
+# Can load previously trained models, train them again with more randomness and things improve!
+
 import math
 import random
 import time
@@ -633,6 +635,7 @@ class execute(object):
 
         # Initialize the agent
         self.agent = Agent('multiphase', self.env.train_env[0][0].size()[0])
+        self.agent.policy_net.load_state_dict(torch.load('ETH_policy_15p_30m_2020-02-24 16:05:25.906369.pt'))
         self.agent.initial_market_value = self.env.train_ask[0][0]
 
 
