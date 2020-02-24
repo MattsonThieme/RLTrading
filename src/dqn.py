@@ -9,6 +9,9 @@
 
 # Need to build a testing class - load new dataset, run over it with no_grad, report as usual
 
+# Try rewarding it with the episode reward - maybe we're putting too much emphasis on individual trades
+# Would need to increase the EPS_DECAY way up, such that we have dozens or hundreds of trips through the entire dataset with a good bit of randomness
+
 import math
 import random
 import time
@@ -292,7 +295,7 @@ class Agent(object):
         # Learning parameters
         self.GAMMA = 0.999
         self.EPS_START = 0.9
-        self.EPS_END = 0.005
+        self.EPS_END = 0.001
         self.EPS_DECAY = 30000  # Increasing in the hopes that it will help the model learn more about short term opportunities - used to be 10k
         self.TARGET_UPDATE = 500# 3000
         self.POLICY_UPDATE = 40  # Will update this actively in report (for now)
