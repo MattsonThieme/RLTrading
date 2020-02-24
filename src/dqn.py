@@ -1,8 +1,13 @@
 
 ## TODO ##
 
-# Parse data into contiguous chunks/episode - thats where the 53% price drop comes from
+# In case I forget: the problem we need to solve is how to keep the average step time
+# down. Initially, it can make $1/4 steps, or a dollar a minute, but then it starts looking
+# for longer opportunities and the $/min goes way down.
 
+# My "reward scaling" on profits might be driving them towards steps around 100
+
+# Need to build a testing class - load new dataset, run over it with no_grad, report as usual
 
 import math
 import random
@@ -29,10 +34,10 @@ Transition = namedtuple('Transition',
 # 1) An LSTM processing only price history data
 # 2) A 'legality network' looking at asset_status, bought price, hold_time to determine if certain actions are legal
 # 3) A 'decision network' looking at the output of 1) and 2) to make the final decision
-class LSTM(nn.Module):
+class MultiPhase(nn.Module):
 
-    def __init__(self, input_dim, hidden_dim, n_layers, properties):
-        super(LSTM, self).__init__()
+    def __init__(self, input_dim, hidden_dim, output_dim, n_layers, properties):
+        super(MultiPhase, self).__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim  # Note: output_dim for LSTM = hidden_dim for now
         self.n_layers = n_layers
@@ -47,6 +52,7 @@ class LSTM(nn.Module):
         self.hidden = (self.hidden_state, self.cell_state)
 
         # Legality network
+        # Haven't included dropout here because properties are deterministic and not noisy
         prop_length = properties.size()[0]
         dec_size = 8  # Size of the final embedding, try some diff vals
         self.ln1 = nn.Linear(prop_length, 128)
@@ -56,7 +62,7 @@ class LSTM(nn.Module):
         self.ln3 = nn.Linear(64, dec_size)
 
         # Decision network
-        self.output_dim = 3
+        self.output_dim = output_dim
         self.dn1 = nn.Linear(dec_size+hidden_dim, 100)
         self.DLn1 = nn.LayerNorm(100)
         self.dn2 = nn.Linear(100, 50)
@@ -124,8 +130,7 @@ class Env(object):
         self.train_ask = None
 
         # Normalization/conversion
-        self.spread = None
-        self.offset = None
+        self.scale = 0
     
     def reset(self):
         # Initial environment parameters
@@ -147,18 +152,14 @@ class Env(object):
     def normalize(self):
         # Normalize train_env/ask to [0,1]
         max_val = 0
-        min_val = np.inf
         for i in self.train_ask:
             max_val = max(max(i), max_val)
-            min_val = min(min(i), min_val)
 
         print("Normalizing to {}".format(max_val))
-        self.spread = max_val - min_val#max(self.train_ask) - min(self.train_ask)
-        self.offset = min_val
-        #self.train_env = (self.train_env - self.offset)/(self.spread)
-        #self.train_ask = (self.train_ask - self.offset)/(self.spread)
+        self.scale = max_val
         self.train_env = self.train_env/max_val
         self.train_ask = self.train_ask/max_val
+
     # Returns two values
     # 1) train_environment: a list train_length*#params long corresponding to a history of train_length at each period interval
     # 2) env_value: a list of floats corresponding to the ask value at the current timestep
@@ -247,6 +248,7 @@ class Agent(object):
 
         # Model parameters
         self.input_dimension = state_size
+        self.hidden_dim = 16
         self.n_actions = 3  # Buy, hold, sell
 
         # State parameters
@@ -280,10 +282,10 @@ class Agent(object):
             self.target_net = DQN(self.input_dimension, self.n_actions).to(device)
             self.target_net.load_state_dict(self.policy_net.state_dict())
             self.target_net.eval()
-        if policy == 'lstm':
+        if policy == 'multiphase':
             self.n_layers = 1
-            self.policy_net = LSTM(self.input_dimension, self.n_actions, self.n_layers, self.gen_properties()).to(device)
-            self.target_net = LSTM(self.input_dimension, self.n_actions, self.n_layers, self.gen_properties()).to(device)
+            self.policy_net = MultiPhase(self.input_dimension, self.hidden_dim, self.n_actions, self.n_layers, self.gen_properties()).to(device)
+            self.target_net = MultiPhase(self.input_dimension, self.hidden_dim, self.n_actions, self.n_layers, self.gen_properties()).to(device)
             self.target_net.load_state_dict(self.policy_net.state_dict())
             self.target_net.eval()
 
@@ -291,7 +293,7 @@ class Agent(object):
         self.GAMMA = 0.999
         self.EPS_START = 0.9
         self.EPS_END = 0.005
-        self.EPS_DECAY = 10000
+        self.EPS_DECAY = 30000  # Increasing in the hopes that it will help the model learn more about short term opportunities - used to be 10k
         self.TARGET_UPDATE = 500# 3000
         self.POLICY_UPDATE = 40  # Will update this actively in report (for now)
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
@@ -300,17 +302,17 @@ class Agent(object):
         self.hold_penalty = np.inf  # How long do we want to hold a falling asset?
         self.max_reward_multiplier = 2
         self.reward_turning_point = 160  # 40 mins at 15s period
-        self.reward_multiplier = 100  # Rewards are pretty sparse, we want to pump them up a bit
+        self.reward_multiplier = 1  # Rewards are pretty sparse, we want to pump them up a bit
 
     def update_target(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
-    def report(self, ask, spread, offset, step, total, last):
+    def report(self, ask, scale, step, total, last):
         if (len(self.gains) >= 20) or (last):
 
-            print("\nGlobal start: ${}, current: :${}  -- ({}/{})".format(round(self.initial_market_value*spread + offset, 2), ask*spread + offset, step, total))
-            print("Market moved ${} over the session".format(round((ask*spread + offset) - self.session_begin_value,2)))
-            print("Start: ${}, current: ${}".format(round(self.initial_market_value*spread + offset,3), round(ask*spread + offset,3)))
+            print("\nGlobal start: ${}, current: :${}  -- ({}/{})".format(round(self.initial_market_value*scale, 2), ask*scale, step, total))
+            print("Market moved ${} over the session".format(round((ask*scale) - self.session_begin_value,2)))
+            print("Start: ${}, current: ${}".format(round(self.initial_market_value*scale,3), round(ask*scale,3)))
             print("     Session wins: {} @ $ {}, avg hold: {} steps".format(len(self.gains), self.investment_scale*round(sum(self.gains)/(len(self.gains)+1),3), round(sum(self.gain_hold)/(len(self.gain_hold)+1),0)))
             print("     Session loss: {} @ ${}, avg hold: {} steps".format(len(self.losses), self.investment_scale*round(sum(self.losses)/(len(self.losses)+1),3), round(sum(self.loss_hold)/(len(self.loss_hold)+1),0)))
             print("     Session Net:  ${}".format(round(self.investment_scale*(sum(self.gains) + sum(self.losses)),2)))  # Losses are already negative
@@ -320,14 +322,14 @@ class Agent(object):
             #    self.POLICY_UPDATE += 10
             #    self.TARGET_UPDATE += 10
             #    print("New policy_update: {}, Target update: {}".format(self.POLICY_UPDATE, self.TARGET_UPDATE))
-            self.session_begin_value = ask*spread + offset
+            self.session_begin_value = ask*scale
             self.gains = []
             self.losses = []
             self.gain_hold = []
             self.loss_hold = []
 
     def gen_properties(self):
-        return torch.tensor([self.asset_status, self.bought, 2.0/(self.hold_time+1)-1]).type('torch.FloatTensor')  # 1/self.hold_time because I think the enormous numbers are throwing off the L-network. Scales to [1, -1]
+        return torch.tensor([self.asset_status, self.bought, 2.0/(self.hold_time+1)-1]).type('torch.FloatTensor')  # 2/self.hold_time because I think the enormous numbers are throwing off the L-network. Scales to [1, -1]
 
 
     def reset(self):
@@ -379,6 +381,11 @@ class Agent(object):
 
         
         self.memory.push(state, properties, action, reward, target, next_reward)
+
+        # Try oversampling wins
+        #if (reward > 0) or (next_reward > 0):
+        #    for i in range(10):
+        #        self.memory.push(state, properties, action, reward, target, next_reward)
 
 
     def profit(self, ask):
@@ -435,25 +442,17 @@ class Agent(object):
 
                 # Scale this just like the reward for selling
                 if self.hold_time > self.reward_multiplier:
-                    reward = reward
+                    reward = reward*self.reward_multiplier/self.hold_time  # Eh, scale this too
                 else:
                     reward = reward*self.reward_multiplier/self.hold_time
-
-                #if self.slope(self.last_ask, ask) > 0:
-                #    reward = self.profit(ask)
-                #else:
-                #    reward = -1*self.profit(ask)  #-self.hold_time/self.hold_penalty  # If we bought at a bad time, penalize holding an asset with falling value
 
             # Selling is legal
             if action == 2:
                 reward = self.profit(ask)
 
                 if reward > 0:
-                    #reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
-                    #if self.hold_time > 50:
-                    #    reward *= -1
                     if self.hold_time > self.reward_multiplier:
-                        reward = reward
+                        reward = reward*self.reward_multiplier/self.hold_time
                     else:
                         reward = reward*self.reward_multiplier/self.hold_time  # Increase value at < reward_multiplier time steps
                 if reward <= 0:
@@ -509,7 +508,7 @@ class Agent(object):
 
                 # Scale this just like the reward for selling
                 if self.hold_time > self.reward_multiplier:
-                    reward = reward
+                    reward = reward*self.reward_multiplier/self.hold_time  # Eh, scale this too
                 else:
                     reward = reward*self.reward_multiplier/self.hold_time
 
@@ -540,7 +539,7 @@ class Agent(object):
                     #if self.hold_time > 50:
                     #    reward *= -1
                     if self.hold_time > self.reward_multiplier:  # Let the reward stand if its greater than reward_multiplier, I just want to incentivize quicker trades
-                        reward = reward
+                        reward = reward*self.reward_multiplier/self.hold_time
                     else:
                         reward = reward*self.reward_multiplier/self.hold_time  # Increase value at < reward_multiplier time steps
                     print("Rewa: $ {}\n".format(reward))
@@ -629,8 +628,8 @@ class execute(object):
         self.env.normalize()
 
         # Initialize the agent
-        self.agent = Agent('lstm', self.env.train_env[0][0].size()[0])
-        self.agent.initial_market_value = self.env.train_ask[0]
+        self.agent = Agent('multiphase', self.env.train_env[0][0].size()[0])
+        self.agent.initial_market_value = self.env.train_ask[0][0]
 
 
     def trade(self):
@@ -660,7 +659,7 @@ class execute(object):
                     self.agent.optimize_model(self.agent.BATCH_SIZE)
 
                 # Output training info
-                self.agent.report(ask, self.env.spread, self.env.offset, i, episode.shape[0], last=False)
+                self.agent.report(ask, self.env.scale, i, episode.shape[0], last=False)
 
                 # Update target network
                 if i%self.agent.TARGET_UPDATE:
@@ -671,7 +670,7 @@ class execute(object):
                 self.agent.last_ask = ask
 
             # Output training info
-            self.agent.report(self.env.train_ask[e][i], self.env.spread, self.env.offset, i, episode.shape[0], last=True)  # Show the final result at the end of the episode
+            self.agent.report(self.env.train_ask[e][i], self.env.scale, i, episode.shape[0], last=True)  # Show the final result at the end of the episode
             print("#"*30)
             print("\nCompleted episode {} of {}\n".format(e, self.env.train_env.shape[0]))
             print("#"*30)
@@ -682,7 +681,7 @@ class execute(object):
 
 # TODO: Add some parameters here so it's easier to prototype
 investment = 1
-model = 'lstm'
+model = 'multiphase'
 
 beast = execute()
 beast.trade()
