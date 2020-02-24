@@ -254,7 +254,6 @@ class Agent(object):
         self.asset_status = 0
         self.bought = 0
         self.hold_time = 0
-        self.gain_track = 1
 
         # Memory
         self.mem_capacity = 10000
@@ -293,8 +292,8 @@ class Agent(object):
         self.EPS_START = 0.9
         self.EPS_END = 0.005
         self.EPS_DECAY = 10000
-        self.TARGET_UPDATE = 200# 3000
-        self.POLICY_UPDATE = 10  # Will update this actively in report (for now)
+        self.TARGET_UPDATE = 500# 3000
+        self.POLICY_UPDATE = 40  # Will update this actively in report (for now)
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
         self.BATCH_SIZE = 1024
@@ -312,8 +311,8 @@ class Agent(object):
             print("\nGlobal start: ${}, current: :${}  -- ({}/{})".format(round(self.initial_market_value*spread + offset, 2), ask*spread + offset, step, total))
             print("Market moved ${} over the session".format(round((ask*spread + offset) - self.session_begin_value,2)))
             print("Start: ${}, current: ${}".format(round(self.initial_market_value*spread + offset,3), round(ask*spread + offset,3)))
-            print("     Session wins: {} @ $ {}, avg hold: {} steps".format(len(self.gains), self.investment_scale*round(sum(self.gains)/len(self.gains),3), round(sum(self.gain_hold)/len(self.gain_hold),0)))
-            print("     Session loss: {} @ ${}, avg hold: {} steps".format(len(self.losses), self.investment_scale*round(sum(self.losses)/len(self.losses),3), round(sum(self.loss_hold)/len(self.loss_hold),0)))
+            print("     Session wins: {} @ $ {}, avg hold: {} steps".format(len(self.gains), self.investment_scale*round(sum(self.gains)/(len(self.gains)+1),3), round(sum(self.gain_hold)/(len(self.gain_hold)+1),0)))
+            print("     Session loss: {} @ ${}, avg hold: {} steps".format(len(self.losses), self.investment_scale*round(sum(self.losses)/(len(self.losses)+1),3), round(sum(self.loss_hold)/(len(self.loss_hold)+1),0)))
             print("     Session Net:  ${}".format(round(self.investment_scale*(sum(self.gains) + sum(self.losses)),2)))  # Losses are already negative
             print("     Episode total: ${}\n\n\n".format(round(self.investment_scale*self.episode_profit,2)))
 
@@ -336,7 +335,6 @@ class Agent(object):
         self.asset_status = 0
         self.bought = 0
         self.hold_time = 0
-        self.gain_track = 1
 
         # Financial parameters
         self.losses = []
@@ -426,10 +424,25 @@ class Agent(object):
 
             # Cost of holding is the opportunity cost of not selling
             if action == 1:
-                if self.slope(self.last_ask, ask) > 0:
-                    reward = self.profit(ask)
+
+                if self.profit(ask) > 0:
+                    if self.slope(self.last_ask, ask) > 0:
+                        reward = self.profit(ask)
+                    else:
+                        reward = -1*self.profit(ask)
                 else:
-                    reward = -1*self.profit(ask)  #-self.hold_time/self.hold_penalty  # If we bought at a bad time, penalize holding an asset with falling value
+                    reward = -1*self.profit(ask)
+
+                # Scale this just like the reward for selling
+                if self.hold_time > self.reward_multiplier:
+                    reward = reward
+                else:
+                    reward = reward*self.reward_multiplier/self.hold_time
+
+                #if self.slope(self.last_ask, ask) > 0:
+                #    reward = self.profit(ask)
+                #else:
+                #    reward = -1*self.profit(ask)  #-self.hold_time/self.hold_penalty  # If we bought at a bad time, penalize holding an asset with falling value
 
             # Selling is legal
             if action == 2:
@@ -485,10 +498,25 @@ class Agent(object):
             # Cost of holding is the opportunity cost of not selling
             if action == 1:
 
-                if self.slope(self.last_ask, ask) > 0:
-                    reward = self.profit(ask)
+
+                if self.profit(ask) > 0:
+                    if self.slope(self.last_ask, ask) > 0:
+                        reward = self.profit(ask)
+                    else:
+                        reward = -1*self.profit(ask)
                 else:
-                    reward = -1*self.profit(ask)  #-self.hold_time/self.hold_penalty  # If we bought at a bad time, penalize holding an asset with falling value
+                    reward = -1*self.profit(ask)
+
+                # Scale this just like the reward for selling
+                if self.hold_time > self.reward_multiplier:
+                    reward = reward
+                else:
+                    reward = reward*self.reward_multiplier/self.hold_time
+
+                #if self.slope(self.last_ask, ask) > 0:
+                #    reward = self.profit(ask)
+                #else:
+                #    reward = -1*self.profit(ask)  #-self.hold_time/self.hold_penalty  # If we bought at a bad time, penalize holding an asset with falling value
                 
 
             # Selling is legal
@@ -500,7 +528,6 @@ class Agent(object):
 
                 if reward > 0:
                     print("Gain: $ {}, bought at {}, sold at {} after {} steps".format(round(self.investment_scale*reward,2), round(self.bought,4), round(ask,4), self.hold_time))
-                    self.gain_track += 1
                     self.gains.append(reward)
                     self.gain_buy_sell.append((round(self.bought,4), round(ask,4)))
                     self.gain_hold.append(self.hold_time)
@@ -637,7 +664,7 @@ class execute(object):
 
                 # Update target network
                 if i%self.agent.TARGET_UPDATE:
-                    self.agent.gain_track = 0
+
                     #print("Updating target net...({}/{})".format(i, episode.shape[0]))
                     self.agent.target_net.load_state_dict(self.agent.policy_net.state_dict())
             
