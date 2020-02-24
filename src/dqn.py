@@ -672,6 +672,10 @@ class execute(object):
             
                 self.agent.last_ask = ask
 
+            # Store transitions in an array, go through that array here and push them into memory (make memory of length 40k), assigning them all the reward from the whole episode
+            # Run 40 optimizations at BS 1024 here, then go onto the next episode
+            # Make EPS_DECAY = 100k or something, maybe more. Training will be much faster if we don't update every time we make a trade
+
             # Output training info
             self.agent.report(self.env.train_ask[e][i], self.env.scale, i, episode.shape[0], last=True)  # Show the final result at the end of the episode
             print("#"*30)
