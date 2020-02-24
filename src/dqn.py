@@ -355,18 +355,32 @@ class Agent(object):
         self.gain_hold = []
         self.loss_hold = []
 
+
+        self.testA = None
+        self.testB = None
+
     # Return asset status, bought value, 
     def take_action(self, state, properties, last_ask, ask, next_env, next_ask):
-        
+        self.testA = list(self.policy_net.parameters())[0]
         rand = random.random()
         epsilon_threshold = self.EPS_END + (self.EPS_START - self.EPS_END)*math.exp(-1. * self.total_steps/self.EPS_DECAY)
+        if self.total_steps > self.EPS_DECAY:
+            epsilon_threshold = -1
         self.total_steps += 1
         if rand > epsilon_threshold:
             with torch.no_grad():
                 action = self.policy_net(state, properties).max(0)[1].view(1,1)  # Returns the index of the maximum output in a 1x1 tensor
+                values, indices = torch.max(self.policy_net(state, properties), 0)
+                print(self.policy_net(state, properties))
+                print("Values: {}, indices: {}".format(values, indices))
+                print(action[0][0].item(), "lalala")
+                #if action[0][0].item() == 0:
+                #    print("action")
         else:
-            #print("Chose randomly ({})...".format(epsilon_threshold))
+            
             action = torch.tensor([[random.randrange(self.n_actions)]], device=device, dtype=torch.long)
+            if self.asset_status == 1 and action == 2:
+                print("Sold randomly ({})...".format(action.item()))
 
         reward = self.reward_calc(action, self.asset_status, self.investment, self.bought, self.hold_time, self.fee, ask)
 
@@ -635,8 +649,8 @@ class execute(object):
 
         # Initialize the agent
         self.agent = Agent('multiphase', self.env.train_env[0][0].size()[0])
-        self.agent.policy_net.load_state_dict(torch.load('ETH_policy_15p_30m_2020-02-24 16:05:25.906369.pt'))
-        self.agent.initial_market_value = self.env.train_ask[0][0]
+        self.agent.policy_net.load_state_dict(torch.load('ETH_2X_policy_15p_30m_2020-02-24.pt'))
+        self.agent.initial_market_value = self.agent.investment_scale*self.env.train_ask[0][0]
 
 
     def trade(self):
@@ -664,6 +678,10 @@ class execute(object):
                 if i%self.agent.POLICY_UPDATE == 0:
                     #print("Optimizing...")
                     self.agent.optimize_model(self.agent.BATCH_SIZE)
+
+                self.agent.testB = list(self.agent.policy_net.parameters())[0]
+
+                print(torch.equal(self.agent.testA, self.agent.testB))
 
                 # Output training info
                 self.agent.report(ask, self.env.scale, i, episode.shape[0], last=False)
