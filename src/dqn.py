@@ -265,7 +265,7 @@ class Agent(object):
         self.memory = ReplayMemory(self.mem_capacity)
 
         # Financial parameters
-        self.fee = 0.00075  # 0.075% for Binance
+        self.fee = 0.0#0075  # 0.075% for Binance  - 0: Robinhood on the scene
         self.investment = 1#000
         self.investment_scale = 1000  # Some numerical issues if actual investment is this high, so just scale what we report
         self.losses = []
@@ -382,7 +382,6 @@ class Agent(object):
             # All local values were updated with the last reward_calc
             next_reward = self.target_reward_calc(next_action, self.asset_status, self.investment, self.bought, self.hold_time, self.fee, next_ask)
 
-        
         self.memory.push(state, properties, action, reward, target, next_reward)
 
         # Try oversampling wins
@@ -419,7 +418,8 @@ class Agent(object):
 
             # Holding is legal, but don't hold forever
             if action == 1:
-                reward = -1*self.hold_time/self.hold_penalty
+                #reward = -1*self.hold_time/self.hold_penalty
+                reward = -1*self.slope(self.last_ask, ask)
 
             # Selling is illegal
             if action == 2:
@@ -482,7 +482,8 @@ class Agent(object):
             # Holding is legal, but don't hold forever
             if action == 1:
                 self.hold_time += 1
-                reward = -self.hold_time/self.hold_penalty
+                #reward = -self.hold_time/self.hold_penalty
+                reward = -1*self.slope(self.last_ask, ask)
 
             # Selling is illegal
             if action == 2:
@@ -529,14 +530,14 @@ class Agent(object):
                 self.episode_profit += reward
 
                 if reward > 0:
-                    print("Gain: $ {}, bought at {}, sold at {} after {} steps".format(round(self.investment_scale*reward,2), round(self.bought,4), round(ask,4), self.hold_time))
+                    #print("Gain: $ {}, bought at {}, sold at {} after {} steps".format(round(self.investment_scale*reward,2), round(self.bought,4), round(ask,4), self.hold_time))
                     self.gains.append(reward)
                     self.gain_buy_sell.append((round(self.bought,4), round(ask,4)))
                     self.gain_hold.append(self.hold_time)
                     self.profit_track.append(reward)
                     
                     # Optimize for highest reward/time
-                    print("Rewa: $ {}".format(reward))
+                    #print("Rewa: $ {}".format(reward))
                     #reward *= 1.3*np.exp(-0.5*(self.hold_time/60)**2)  # Another magic number, start disincentivizing rewards after ~17 minutes
                     #reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
                     #if self.hold_time > 50:
@@ -545,11 +546,11 @@ class Agent(object):
                         reward = reward*self.reward_multiplier/self.hold_time
                     else:
                         reward = reward*self.reward_multiplier/self.hold_time  # Increase value at < reward_multiplier time steps
-                    print("Rewa: $ {}\n".format(reward))
+                    #print("Rewa: $ {}\n".format(reward))
 
 
                 if reward <= 0:
-                    print("Loss: ${}, bought at {}, sold at {} after {} steps".format(round(self.investment_scale*reward,2), round(self.bought,4), round(ask,4), self.hold_time))
+                    #print("Loss: ${}, bought at {}, sold at {} after {} steps".format(round(self.investment_scale*reward,2), round(self.bought,4), round(ask,4), self.hold_time))
                     self.losses.append(reward)
                     self.loss_buy_sell.append((round(self.bought,4), round(ask,4)))
                     self.loss_hold.append(self.hold_time)
@@ -557,9 +558,9 @@ class Agent(object):
                     #reward *= np.log(2*self.hold_time)  # Penalize model for holding onto a losing trade proportional to the time it holds on
 
                     # Optimize for highest reward/time
-                    print("Rewa: ${}".format(reward))
+                    #print("Rewa: ${}".format(reward))
                     reward = reward*(1 + self.hold_time/10)
-                    print("Rewa: ${}\n".format(reward))
+                    #print("Rewa: ${}\n".format(reward))
 
                 self.hold_time = 0
 
