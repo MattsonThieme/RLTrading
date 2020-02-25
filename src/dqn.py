@@ -81,14 +81,14 @@ class MultiPhase(nn.Module):
         return Variable(x.unsqueeze_(0).unsqueeze_(0))
 
     def forward(self, x, properties):
-        inp = Variable(x.clone())
+        inp = Variable(x)
         #inp = Variable(inp)
         properties = Variable(properties)
         # Handle various batch sizes between regular state vs. transition history - not very elegant, but it works
-        if len(inp.shape) == 1:
-            inp = self.reshape(inp)#inp.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim] - needed for LSTM
-        else:
-            inp.unsqueeze_(0)
+        #if len(inp.shape) == 1:
+        #    inp = self.reshape(inp)#inp.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim] - needed for LSTM
+        #else:
+        #    inp.unsqueeze_(0)
 
         self.out, self.hidden = self.lstm_layer(inp, self.hidden)
 
@@ -613,12 +613,17 @@ class Agent(object):
             batch_target.append(trans.target[0])
             batch_next_action.append(trans.next_action[0])
 
-        batch_state = torch.stack(batch_state).to(device)
+        batch_state = torch.cat(batch_state).squeeze(1).unsqueeze_(0).to(device)
         batch_prop = torch.stack(batch_prop).to(device)
         batch_action = torch.stack(batch_action).to(device)
         batch_reward = torch.stack(batch_reward).to(device)
-        batch_target = torch.stack(batch_target).to(device)
+        batch_target = torch.cat(batch_target).squeeze(1).unsqueeze_(0).to(device)
         batch_next_action = torch.stack(batch_next_action).to(device)
+
+        #batch_state = batch_state.squeeze(1).unsqueeze_(0)
+        #print("Batch shape: ", batch_prop.shape)
+
+
 
         # State-action values
         state_action_values = self.policy_net(batch_state, batch_prop).gather(1, batch_action)
@@ -682,6 +687,16 @@ class execute(object):
                 next_ask = self.env.train_ask[e][i+1]
                 next_state = self.env.train_env[e][i+1]
 
+                #print("State shape: ", state.shape)
+                if len(state.shape) == 1:
+                    #print("here")
+                    state = state.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim] - needed for LSTM
+                    next_state = next_state.unsqueeze_(0).unsqueeze_(0)
+                else:
+                    state.unsqueeze_(0)
+                    next_state.unsqueeze_(0)
+
+                #print("New shape: ", state.shape)
                 # Take an action
                 self.agent.take_action(state, self.agent.gen_properties(), self.agent.last_ask, ask, next_state, next_ask)
 
