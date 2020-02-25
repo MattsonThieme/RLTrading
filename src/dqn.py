@@ -28,6 +28,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+from torch.autograd import Variable
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -47,6 +48,7 @@ class MultiPhase(nn.Module):
         self.hidden_dim = hidden_dim  # Note: output_dim for LSTM = hidden_dim for now
         self.n_layers = n_layers
         self.lstm_layer = nn.LSTM(self.input_dim, self.hidden_dim, self.n_layers, batch_first=True)
+        #self.lstm_layer = nn.GRU(self.input_dim, self.hidden_dim, self.n_layers, batch_first=True)
 
         self.batch_size = 1
         self.seq_len = 1
@@ -77,11 +79,14 @@ class MultiPhase(nn.Module):
 
     def forward(self, x, properties):
         inp = x.clone()
+        inp = Variable(inp)
+        properties = Variable(properties)
         # Handle various batch sizes between regular state vs. transition history - not very elegant, but it works
         if len(inp.shape) == 1:
             inp.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim] - needed for LSTM
         else:
             inp.unsqueeze_(0)
+
         self.out, self.hidden = self.lstm_layer(inp, self.hidden)
 
         legal = F.relu(self.LLn1(self.ln1(properties)))
@@ -92,8 +97,8 @@ class MultiPhase(nn.Module):
         if self.out.shape[1] == 1:
             ind = torch.cat((legal, self.out.squeeze(0).squeeze(0)),0).to(device)  # Squeeze out tensor to recast to [hidden_dim]
         else:
-            ind = torch.cat((self.out, legal.unsqueeze(0)),2).squeeze(0).to(device)  # Cat batches
-        dec = F.relu(self.Ld1(self.DLn1(self.dn1(ind))))
+            ind = torch.cat((F.relu(self.out), legal.unsqueeze(0)),2).squeeze(0).to(device)  # Cat batches
+        dec = F.relu(self.DLn1(self.dn1(ind)))
         dec = F.relu(self.DLn2(self.dn2(dec)))
 
         return self.dn3(dec)
@@ -303,7 +308,7 @@ class Agent(object):
         self.POLICY_UPDATE = 40  # Will update this actively in report (for now)
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
-        self.BATCH_SIZE = 1024
+        self.BATCH_SIZE = 10#24
         self.hold_penalty = np.inf  # How long do we want to hold a falling asset?
         self.max_reward_multiplier = 2
         self.reward_turning_point = 160  # 40 mins at 15s period
@@ -618,12 +623,13 @@ class Agent(object):
 
         #loss = F.smooth_l1_loss(state_action_values, batch_reward.unsqueeze(1))
         loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
-
+        print("loss = ",loss)
         self.optimizer.zero_grad()
         loss.backward(retain_graph=True)
         # Don't want to do this because some trades are better than others and we want the network updates to reflect that
         #for param in self.policy_net.parameters():  # restrict grad updates to (-1,1)
         #    param.grad.data.clamp_(-1,1)
+        #for i in range(100):
         self.optimizer.step()
 
     # Implement to actually send orders with ccxt
@@ -649,7 +655,7 @@ class execute(object):
 
         # Initialize the agent
         self.agent = Agent('multiphase', self.env.train_env[0][0].size()[0])
-        self.agent.policy_net.load_state_dict(torch.load('ETH_2X_policy_15p_30m_2020-02-24.pt'))
+        #self.agent.policy_net.load_state_dict(torch.load('ETH_2X_policy_15p_30m_2020-02-24.pt'))
         self.agent.initial_market_value = self.agent.investment_scale*self.env.train_ask[0][0]
 
 
@@ -678,8 +684,9 @@ class execute(object):
                 if i%self.agent.POLICY_UPDATE == 0:
                     #print("Optimizing...")
                     self.agent.testA = list(self.agent.policy_net.parameters())[0].clone()
+                    
                     self.agent.optimize_model(self.agent.BATCH_SIZE)
-
+                    print("Grad0: ", list(self.agent.policy_net.parameters())[0].grad)
                     self.agent.testB = list(self.agent.policy_net.parameters())[0].clone()
 
                     print("Policies equivalent: ", torch.equal(self.agent.testA, self.agent.testB))
