@@ -77,13 +77,16 @@ class MultiPhase(nn.Module):
         self.DLn2 = nn.LayerNorm(50)
         self.dn3 = nn.Linear(50, self.output_dim)
 
+    def reshape(self, x):
+        return Variable(x.unsqueeze_(0).unsqueeze_(0))
+
     def forward(self, x, properties):
-        inp = x.clone()
-        inp = Variable(inp)
+        inp = Variable(x.clone())
+        #inp = Variable(inp)
         properties = Variable(properties)
         # Handle various batch sizes between regular state vs. transition history - not very elegant, but it works
         if len(inp.shape) == 1:
-            inp.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim] - needed for LSTM
+            inp = self.reshape(inp)#inp.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim] - needed for LSTM
         else:
             inp.unsqueeze_(0)
 
@@ -308,7 +311,7 @@ class Agent(object):
         self.POLICY_UPDATE = 40  # Will update this actively in report (for now)
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
-        self.BATCH_SIZE = 10#24
+        self.BATCH_SIZE = 1024#24
         self.hold_penalty = np.inf  # How long do we want to hold a falling asset?
         self.max_reward_multiplier = 2
         self.reward_turning_point = 160  # 40 mins at 15s period
@@ -369,12 +372,14 @@ class Agent(object):
         #self.testA = list(self.policy_net.parameters())[0]
         rand = random.random()
         epsilon_threshold = self.EPS_END + (self.EPS_START - self.EPS_END)*math.exp(-1. * self.total_steps/self.EPS_DECAY)
-        if self.total_steps > self.EPS_DECAY:
-            epsilon_threshold = -1
+        #if self.total_steps > self.EPS_DECAY:
+        #    epsilon_threshold = -1
         self.total_steps += 1
         if rand > epsilon_threshold:
             with torch.no_grad():
                 action = self.policy_net(state, properties).max(0)[1].view(1,1)  # Returns the index of the maximum output in a 1x1 tensor
+                if self.total_steps%50==0:
+                    print("Action: ", self.policy_net(state, properties))
                 #values, indices = torch.max(self.policy_net(state, properties), 0)
                 #print(self.policy_net(state, properties))
                 #print("Values: {}, indices: {}".format(values, indices))
@@ -623,7 +628,7 @@ class Agent(object):
 
         #loss = F.smooth_l1_loss(state_action_values, batch_reward.unsqueeze(1))
         loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
-        print("loss = ",loss)
+        #print("loss = ",loss)
         self.optimizer.zero_grad()
         loss.backward(retain_graph=True)
         # Don't want to do this because some trades are better than others and we want the network updates to reflect that
@@ -644,7 +649,7 @@ class execute(object):
 
         # Params for initializing the environment
         self.asset = 'ETH'
-        self.minutes_back = 30
+        self.minutes_back = 10
         self.period = 15
         self.params = ['ask']
 
@@ -689,7 +694,7 @@ class execute(object):
                     print("Grad0: ", list(self.agent.policy_net.parameters())[0].grad)
                     self.agent.testB = list(self.agent.policy_net.parameters())[0].clone()
 
-                    print("Policies equivalent: ", torch.equal(self.agent.testA, self.agent.testB))
+                    #print("Policies equivalent: ", torch.equal(self.agent.testA, self.agent.testB))
 
                 # Output training info
                 self.agent.report(ask, self.env.scale, i, episode.shape[0], last=False)
