@@ -28,6 +28,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+from torch.autograd import Variable
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -47,6 +48,7 @@ class MultiPhase(nn.Module):
         self.hidden_dim = hidden_dim  # Note: output_dim for LSTM = hidden_dim for now
         self.n_layers = n_layers
         self.lstm_layer = nn.LSTM(self.input_dim, self.hidden_dim, self.n_layers, batch_first=True)
+        #self.lstm_layer = nn.GRU(self.input_dim, self.hidden_dim, self.n_layers, batch_first=True)
 
         self.batch_size = 1
         self.seq_len = 1
@@ -75,13 +77,19 @@ class MultiPhase(nn.Module):
         self.DLn2 = nn.LayerNorm(50)
         self.dn3 = nn.Linear(50, self.output_dim)
 
+    def reshape(self, x):
+        return Variable(x.unsqueeze_(0).unsqueeze_(0))
+
     def forward(self, x, properties):
-        inp = x.clone()
+        inp = Variable(x)
+        #inp = Variable(inp)
+        properties = Variable(properties)
         # Handle various batch sizes between regular state vs. transition history - not very elegant, but it works
-        if len(inp.shape) == 1:
-            inp.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim] - needed for LSTM
-        else:
-            inp.unsqueeze_(0)
+        #if len(inp.shape) == 1:
+        #    inp = self.reshape(inp)#inp.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim] - needed for LSTM
+        #else:
+        #    inp.unsqueeze_(0)
+
         self.out, self.hidden = self.lstm_layer(inp, self.hidden)
 
         legal = F.relu(self.LLn1(self.ln1(properties)))
@@ -92,8 +100,8 @@ class MultiPhase(nn.Module):
         if self.out.shape[1] == 1:
             ind = torch.cat((legal, self.out.squeeze(0).squeeze(0)),0).to(device)  # Squeeze out tensor to recast to [hidden_dim]
         else:
-            ind = torch.cat((self.out, legal.unsqueeze(0)),2).squeeze(0).to(device)  # Cat batches
-        dec = F.relu(self.Ld1(self.DLn1(self.dn1(ind))))
+            ind = torch.cat((F.relu(self.out), legal.unsqueeze(0)),2).squeeze(0).to(device)  # Cat batches
+        dec = F.relu(self.DLn1(self.dn1(ind)))
         dec = F.relu(self.DLn2(self.dn2(dec)))
 
         return self.dn3(dec)
@@ -129,7 +137,7 @@ class Env(object):
         self.bought = 0
         self.hold_time = 0
 
-        self.num_episodes = 2  # Somewhat defunct with new data-loader, but will keep for now
+        self.num_episodes = 5  # Somewhat defunct with new data-loader, but will keep for now
         self.train_params = params  # ['ask']
         self.train_env = None
         self.train_ask = None
@@ -267,7 +275,7 @@ class Agent(object):
         self.memory = ReplayMemory(self.mem_capacity)
 
         # Financial parameters
-        self.fee = 0.00075  # 0.075% for Binance
+        self.fee = 0.0#0075  # 0.075% for Binance
         self.investment = 1#000
         self.investment_scale = 1000  # Some numerical issues if actual investment is this high, so just scale what we report
         self.losses = []
@@ -366,6 +374,8 @@ class Agent(object):
         if rand > epsilon_threshold:
             with torch.no_grad():
                 action = self.policy_net(state, properties).max(0)[1].view(1,1)  # Returns the index of the maximum output in a 1x1 tensor
+                if action !=1:
+                    print("Action: ", action, ", ", self.total_steps)
         else:
             #print("Chose randomly ({})...".format(epsilon_threshold))
             action = torch.tensor([[random.randrange(self.n_actions)]], device=device, dtype=torch.long)
@@ -423,7 +433,8 @@ class Agent(object):
 
             # Holding is legal, but don't hold forever
             if action == 1:
-                reward = -1*self.hold_time/self.hold_penalty
+                #reward = -1*self.hold_time/self.hold_penalty
+                reward = 0
 
             # Selling is illegal
             if action == 2:
@@ -463,7 +474,7 @@ class Agent(object):
                     else:
                         reward = reward*self.reward_multiplier/self.hold_time  # Increase value at < reward_multiplier time steps
                 if reward <= 0:
-                    reward = reward*(1 + self.hold_time/10)
+                    reward = reward#*(1 + self.hold_time/10)
             
         
         return torch.tensor([reward]).type('torch.FloatTensor')
@@ -481,7 +492,7 @@ class Agent(object):
             if action == 0:
                 self.bought = ask
                 self.asset_status = 1  # Money is now in the asset
-                reward = -1
+                reward = 0
 
             # Holding is legal, but don't hold forever
             if action == 1:
@@ -562,7 +573,7 @@ class Agent(object):
 
                     # Optimize for highest reward/time
                     #print("Rewa: ${}".format(reward))
-                    reward = reward*(1 + self.hold_time/10)
+                    reward = reward#*(1 + self.hold_time/10)
                     #print("Rewa: ${}\n".format(reward))
 
                 self.hold_time = 0
@@ -590,11 +601,11 @@ class Agent(object):
             batch_target.append(trans.target[0])
             batch_next_action.append(trans.next_action[0])
 
-        batch_state = torch.stack(batch_state).to(device)
+        batch_state = torch.cat(batch_state).squeeze(1).unsqueeze_(0).to(device)
         batch_prop = torch.stack(batch_prop).to(device)
         batch_action = torch.stack(batch_action).to(device)
         batch_reward = torch.stack(batch_reward).to(device)
-        batch_target = torch.stack(batch_target).to(device)
+        batch_target = torch.cat(batch_target).squeeze(1).unsqueeze_(0).to(device)
         batch_next_action = torch.stack(batch_next_action).to(device)
 
         # State-action values
@@ -625,7 +636,7 @@ class execute(object):
 
         # Params for initializing the environment
         self.asset = 'ETH'
-        self.minutes_back = 30
+        self.minutes_back = 10
         self.period = 15
         self.params = ['ask']
 
@@ -659,6 +670,15 @@ class execute(object):
                     next_ask = self.env.train_ask[e][i+1]
                     next_state = self.env.train_env[e][i+1]
 
+                    #print("State shape: ", state.shape)
+                    if len(state.shape) == 1:
+                        #print("here")
+                        state = state.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim] - needed for LSTM
+                        next_state = next_state.unsqueeze_(0).unsqueeze_(0)
+                    else:
+                        state.unsqueeze_(0)
+                        next_state.unsqueeze_(0)
+
                     # Take an action
                     self.agent.take_action(state, self.agent.gen_properties(), self.agent.last_ask, ask, next_state, next_ask)
 
@@ -681,17 +701,30 @@ class execute(object):
                 
                     self.agent.last_ask = ask
 
-                self.agent.report(ask, self.env.scale, episode.shape[0], episode.shape[0], last=False)
+                self.agent.report(ask, self.env.scale, episode.shape[0], episode.shape[0], last=True)
                 
+                trade_buffer = []
+                single_trade = False
                 # Push transitions to memory
                 for trans in self.agent.episode_memory:
-                    state_ = trans[0]
-                    properties = trans[1]
-                    action = trans[2]
-                    reward = torch.tensor([self.agent.episode_profit]).type('torch.FloatTensor')
-                    target = trans[4]
-                    next_reward = trans[5]
-                    self.agent.memory.push(state_, properties, action, reward, target, next_reward)
+
+                    if trans[2] != 2:
+                        trade_buffer.append(trans)
+
+                    else:
+                        print("Trade length: {}, reward: ${}".format(len(trade_buffer), self.agent.investment_scale*trans[3]))
+                        reward = trans[3]
+                        for trade in trade_buffer:
+                            state_ = trade[0]
+                            properties = trade[1]
+                            action = trade[2]
+                            reward = reward
+                            target = trade[4]
+                            next_reward = trade[5]
+                            self.agent.memory.push(state_, properties, action, reward, target, next_reward)
+                        trade_buffer = []
+                        single_trade = False
+                    
 
                 self.agent.episode_memory = []
 
@@ -699,6 +732,7 @@ class execute(object):
                 print("Optimizing...")
                 for i in range(20):
                     print("{}/{}".format(i, 20))
+                    #print("Grad0: ", list(self.agent.policy_net.parameters())[0].grad)
                     self.agent.optimize_model(self.agent.BATCH_SIZE)
 
                 # Update target
@@ -711,7 +745,6 @@ class execute(object):
                 # Make EPS_DECAY = 100k or something, maybe more. Training will be much faster if we don't update every time we make a trade
 
                 # Output training info
-                self.agent.report(self.env.train_ask[e][i], self.env.scale, i, episode.shape[0], last=True)  # Show the final result at the end of the episode
                 print("#"*30)
                 print("\nCompleted episode {} of {}\n".format(e, self.env.train_env.shape[0]))
                 print("#"*30)
