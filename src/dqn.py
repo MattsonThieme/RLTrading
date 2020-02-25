@@ -77,7 +77,6 @@ class MultiPhase(nn.Module):
         self.dn1 = nn.Linear(dec_size+hidden_dim, 100)
         self.DLn1 = nn.LayerNorm(100)
         self.dn2 = nn.Linear(100, 50)
-        self.Ld1 = nn.AlphaDropout(p=0.2)
         self.DLn2 = nn.LayerNorm(50)
         self.dn3 = nn.Linear(50, self.output_dim)
 
@@ -105,10 +104,11 @@ class MultiPhase(nn.Module):
             ind = torch.cat((legal, self.out.squeeze(0).squeeze(0)),0).to(device)  # Squeeze out tensor to recast to [hidden_dim]
         else:
             ind = torch.cat((F.relu(self.out), legal.unsqueeze(0)),2).squeeze(0).to(device)  # Cat batches
+        
         dec = F.relu(self.DLn1(self.dn1(ind)))
         dec = F.relu(self.DLn2(self.dn2(dec)))
 
-        return self.dn3(dec)
+        return F.softmax(self.dn3(dec))
 
 class DQN(nn.Module):
 
@@ -275,7 +275,7 @@ class Agent(object):
         self.hold_time = 0
 
         # Memory
-        self.mem_capacity = 3000
+        self.mem_capacity = 10000
         self.memory = ReplayMemory(self.mem_capacity)
 
         # Financial parameters
@@ -293,6 +293,7 @@ class Agent(object):
         self.gain_hold = []
         self.loss_hold = []
         self.last_ask = 0
+        self.trade_cycle = []
 
         if policy == 'mlp':
             self.policy_net = DQN(self.input_dimension, self.n_actions).to(device)
@@ -315,7 +316,7 @@ class Agent(object):
         self.POLICY_UPDATE = 40  # Will update this actively in report (for now)
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
-        self.BATCH_SIZE = 1024#24
+        self.BATCH_SIZE = 1024
         self.hold_penalty = np.inf  # How long do we want to hold a falling asset?
         self.max_reward_multiplier = 2
         self.reward_turning_point = 160  # 40 mins at 15s period
@@ -382,8 +383,8 @@ class Agent(object):
         if rand > epsilon_threshold:
             with torch.no_grad():
                 action = self.policy_net(state, properties).max(0)[1].view(1,1)  # Returns the index of the maximum output in a 1x1 tensor
-                if action !=1:
-                    print("Action: ", action, ", ", self.total_steps)
+                if action != 1:
+                    print("Action: ", action, ", ", self.policy_net(state, properties), ", ", self.total_steps)
                 #values, indices = torch.max(self.policy_net(state, properties), 0)
                 #print(self.policy_net(state, properties))
                 #print("Values: {}, indices: {}".format(values, indices))
@@ -412,7 +413,23 @@ class Agent(object):
             # All local values were updated with the last reward_calc
             next_reward = self.target_reward_calc(next_action, self.asset_status, self.investment, self.bought, self.hold_time, self.fee, next_ask)
 
-        self.memory.push(state, properties, action, reward, target, next_reward)
+        # Append trade to 
+        self.trade_cycle.append([state, properties, action, reward, target, next_reward])
+
+        # Assign all past actions to the value of this sale
+        if action == 2:
+            #print("Trade length: {}, ${}".format(len(self.trade_cycle), reward*self.investment_scale))
+            for decision in self.trade_cycle:
+                state_ = decision[0]
+                properties = decision[1]
+                action = decision[2]
+                reward = reward  # Current reward from this grade
+                target = decision[4]
+                next_reward = decision[5]
+                self.memory.push(state_, properties, action, reward, target, next_reward)
+            self.trade_cycle = []
+
+        #self.memory.push(state, properties, action, reward, target, next_reward)
 
         # Try oversampling wins
         #if (reward > 0) or (next_reward > 0):
@@ -492,7 +509,7 @@ class Agent(object):
                     else:
                         reward = reward*self.reward_multiplier/self.hold_time  # Increase value at < reward_multiplier time steps
                 if reward <= 0:
-                    reward = reward#*(1 + self.hold_time/10)
+                    reward = reward*(1 + self.hold_time/10)
             
         
         return torch.tensor([reward]).type('torch.FloatTensor')
@@ -594,7 +611,7 @@ class Agent(object):
 
                     # Optimize for highest reward/time
                     #print("Rewa: ${}".format(reward))
-                    reward = reward#*(1 + self.hold_time/10)
+                    reward = reward*(1 + self.hold_time/10)
                     #print("Rewa: ${}\n".format(reward))
 
                 self.hold_time = 0
