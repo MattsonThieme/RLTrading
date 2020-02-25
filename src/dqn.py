@@ -271,7 +271,7 @@ class Agent(object):
         self.hold_time = 0
 
         # Memory
-        self.mem_capacity = 10000
+        self.mem_capacity = 2000
         self.memory = ReplayMemory(self.mem_capacity)
 
         # Financial parameters
@@ -307,8 +307,8 @@ class Agent(object):
         self.EPS_START = 0.9
         self.EPS_END = 0.001
         self.EPS_DECAY = 30000  # Increasing in the hopes that it will help the model learn more about short term opportunities - used to be 10k
-        self.TARGET_UPDATE = 1000# 3000
-        self.POLICY_UPDATE = 200  # Will update this actively in report (for now)
+        self.TARGET_UPDATE = 500# 3000
+        self.POLICY_UPDATE = 40  # Will update this actively in report (for now)
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
         self.BATCH_SIZE = 1024#24
@@ -576,7 +576,7 @@ class Agent(object):
                     if self.hold_time > self.reward_multiplier:  # Let the reward stand if its greater than reward_multiplier, I just want to incentivize quicker trades
                         reward = reward*self.reward_multiplier/self.hold_time
                     else:
-                        reward = reward#*self.reward_multiplier/self.hold_time  # Increase value at < reward_multiplier time steps
+                        reward = reward*self.reward_multiplier/self.hold_time  # Increase value at < reward_multiplier time steps
                     #print("Rewa: $ {}\n".format(reward))
 
 
@@ -590,7 +590,7 @@ class Agent(object):
 
                     # Optimize for highest reward/time
                     #print("Rewa: ${}".format(reward))
-                    reward = reward*(1 + self.hold_time/10)
+                    reward = reward#*(1 + self.hold_time/10)
                     #print("Rewa: ${}\n".format(reward))
 
                 self.hold_time = 0
