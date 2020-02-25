@@ -14,6 +14,10 @@
 
 # Can load previously trained models, train them again with more randomness and things improve!
 
+
+# Try making penalty for illegal moves smaller, might be throwing things off
+# Integrate reward parser from multiphase
+
 import math
 import random
 import time
@@ -271,7 +275,7 @@ class Agent(object):
         self.hold_time = 0
 
         # Memory
-        self.mem_capacity = 2000
+        self.mem_capacity = 3000
         self.memory = ReplayMemory(self.mem_capacity)
 
         # Financial parameters
@@ -506,7 +510,7 @@ class Agent(object):
             if action == 0:
                 self.bought = ask
                 self.asset_status = 1  # Money is now in the asset
-                reward = -1
+                reward = 0
 
             # Holding is legal, but don't hold forever
             if action == 1:
