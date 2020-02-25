@@ -307,8 +307,8 @@ class Agent(object):
         self.EPS_START = 0.9
         self.EPS_END = 0.001
         self.EPS_DECAY = 30000  # Increasing in the hopes that it will help the model learn more about short term opportunities - used to be 10k
-        self.TARGET_UPDATE = 500# 3000
-        self.POLICY_UPDATE = 40  # Will update this actively in report (for now)
+        self.TARGET_UPDATE = 1000# 3000
+        self.POLICY_UPDATE = 200  # Will update this actively in report (for now)
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
         self.BATCH_SIZE = 1024#24
@@ -378,8 +378,8 @@ class Agent(object):
         if rand > epsilon_threshold:
             with torch.no_grad():
                 action = self.policy_net(state, properties).max(0)[1].view(1,1)  # Returns the index of the maximum output in a 1x1 tensor
-                if self.total_steps%50==0:
-                    print("Action: ", self.policy_net(state, properties))
+                if action !=1:
+                    print("Action: ", action, ", ", self.total_steps)
                 #values, indices = torch.max(self.policy_net(state, properties), 0)
                 #print(self.policy_net(state, properties))
                 #print("Values: {}, indices: {}".format(values, indices))
@@ -445,7 +445,8 @@ class Agent(object):
             # Holding is legal, but don't hold forever
             if action == 1:
                 #reward = -1*self.hold_time/self.hold_penalty
-                reward = -1*self.slope(self.last_ask, ask)
+                #reward = -1*self.slope(self.last_ask, ask)
+                reward = 0
 
             # Selling is illegal
             if action == 2:
@@ -475,6 +476,8 @@ class Agent(object):
                 else:
                     reward = reward*self.reward_multiplier/self.hold_time
 
+                reward = 0
+
             # Selling is legal
             if action == 2:
                 reward = self.profit(ask)
@@ -485,7 +488,7 @@ class Agent(object):
                     else:
                         reward = reward*self.reward_multiplier/self.hold_time  # Increase value at < reward_multiplier time steps
                 if reward <= 0:
-                    reward = reward*(1 + self.hold_time/10)
+                    reward = reward#*(1 + self.hold_time/10)
             
         
         return torch.tensor([reward]).type('torch.FloatTensor')
@@ -509,7 +512,8 @@ class Agent(object):
             if action == 1:
                 self.hold_time += 1
                 #reward = -self.hold_time/self.hold_penalty
-                reward = -1*self.slope(self.last_ask, ask)
+                #reward = -1*self.slope(self.last_ask, ask)
+                reward = 0
 
             # Selling is illegal
             if action == 2:
@@ -542,6 +546,7 @@ class Agent(object):
                 else:
                     reward = reward*self.reward_multiplier/self.hold_time
 
+                reward = 0
                 #if self.slope(self.last_ask, ask) > 0:
                 #    reward = self.profit(ask)
                 #else:
@@ -571,7 +576,7 @@ class Agent(object):
                     if self.hold_time > self.reward_multiplier:  # Let the reward stand if its greater than reward_multiplier, I just want to incentivize quicker trades
                         reward = reward*self.reward_multiplier/self.hold_time
                     else:
-                        reward = reward*self.reward_multiplier/self.hold_time  # Increase value at < reward_multiplier time steps
+                        reward = reward#*self.reward_multiplier/self.hold_time  # Increase value at < reward_multiplier time steps
                     #print("Rewa: $ {}\n".format(reward))
 
 
@@ -706,7 +711,7 @@ class execute(object):
                     self.agent.testA = list(self.agent.policy_net.parameters())[0].clone()
                     
                     self.agent.optimize_model(self.agent.BATCH_SIZE)
-                    print("Grad0: ", list(self.agent.policy_net.parameters())[0].grad)
+                    #print("Grad0: ", list(self.agent.policy_net.parameters())[0].grad)
                     self.agent.testB = list(self.agent.policy_net.parameters())[0].clone()
 
                     #print("Policies equivalent: ", torch.equal(self.agent.testA, self.agent.testB))
