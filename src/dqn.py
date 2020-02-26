@@ -74,11 +74,15 @@ class MultiPhase(nn.Module):
 
         # Decision network
         self.output_dim = output_dim
-        self.dn1 = nn.Linear(dec_size+hidden_dim, 100)
-        self.DLn1 = nn.LayerNorm(100)
-        self.dn2 = nn.Linear(100, 50)
-        self.DLn2 = nn.LayerNorm(50)
-        self.dn3 = nn.Linear(50, self.output_dim)
+        self.dn1 = nn.Linear(dec_size+hidden_dim, 500)
+        self.DLn1 = nn.LayerNorm(500)
+        self.dn2 = nn.Linear(500, 200)
+        self.DLn2 = nn.LayerNorm(200)
+        self.dn3 = nn.Linear(200, 50)
+        self.DLn3 = nn.LayerNorm(50)
+        self.dn4 = nn.Linear(50, self.output_dim)
+
+        self.dropout = nn.Dropout(p=0.2)
 
     def reshape(self, x):
         return Variable(x.unsqueeze_(0).unsqueeze_(0))
@@ -103,12 +107,13 @@ class MultiPhase(nn.Module):
         if self.out.shape[1] == 1:
             ind = torch.cat((legal, self.out.squeeze(0).squeeze(0)),0).to(device)  # Squeeze out tensor to recast to [hidden_dim]
         else:
-            ind = torch.cat((F.relu(self.out), legal.unsqueeze(0)),2).squeeze(0).to(device)  # Cat batches
+            ind = torch.cat((self.out, legal.unsqueeze(0)),2).squeeze(0).to(device)  # Cat batches
         
         dec = F.relu(self.DLn1(self.dn1(ind)))
         dec = F.relu(self.DLn2(self.dn2(dec)))
+        dec = F.relu(self.DLn3(self.dn3(dec)))
 
-        return F.softmax(self.dn3(dec))
+        return F.softmax(self.dn4(dec))
 
 class DQN(nn.Module):
 
@@ -265,7 +270,7 @@ class Agent(object):
 
         # Model parameters
         self.input_dimension = state_size
-        self.hidden_dim = 16
+        self.hidden_dim = 32
         self.n_actions = 3  # Buy, hold, sell
 
         # State parameters
@@ -383,8 +388,8 @@ class Agent(object):
         if rand > epsilon_threshold:
             with torch.no_grad():
                 action = self.policy_net(state, properties).max(0)[1].view(1,1)  # Returns the index of the maximum output in a 1x1 tensor
-                if action != 1:
-                    print("Action: ", action, ", ", self.policy_net(state, properties), ", ", self.total_steps)
+                #if action != 1:
+                print("Action: ", action, ", ", self.policy_net(state, properties), ", ", self.total_steps)
                 #values, indices = torch.max(self.policy_net(state, properties), 0)
                 #print(self.policy_net(state, properties))
                 #print("Values: {}, indices: {}".format(values, indices))
@@ -423,7 +428,10 @@ class Agent(object):
                 state_ = decision[0]
                 properties = decision[1]
                 action = decision[2]
-                reward = reward  # Current reward from this grade
+                if decision[3] == -1:
+                    reward = decision[3]
+                else:
+                    reward = reward  # Current reward from this grade
                 target = decision[4]
                 next_reward = decision[5]
                 self.memory.push(state_, properties, action, reward, target, next_reward)
