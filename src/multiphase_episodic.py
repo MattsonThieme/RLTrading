@@ -712,6 +712,7 @@ class execute(object):
                         trade_buffer.append(trans)
 
                     else:
+                        trade_buffer.append(trans)
                         print("Trade length: {}, reward: ${}".format(len(trade_buffer), self.agent.investment_scale*trans[3]))
                         reward = trans[3]
                         for trade in trade_buffer:
