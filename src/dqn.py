@@ -166,9 +166,11 @@ class Env(object):
 
     def load_data(self):
         try:
+            print("Loading {}_ask_p{}s_l{}m_env.pt".format(self.assets, self.train_period, self.minutes_back))
             self.train_env = torch.load('{}_ask_p{}s_l{}m_env.pt'.format(self.assets, self.train_period, self.minutes_back))
             self.train_ask = torch.load('{}_ask_p{}s_l{}m_ask.pt'.format(self.assets, self.train_period, self.minutes_back))
         except:
+            print("Creating {}_ask_p{}s_l{}m_env.pt".format(self.assets, self.train_period, self.minutes_back))
             self.data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/crypto/ETH/ETH_1s_4.csv'
             self.train_env, self.train_ask = self.parse_data(self.data_path, self.train_length, self.train_params, self.train_period)
             torch.save(self.train_env, '{}_ask_p{}s_l{}m_env.pt'.format(self.assets, self.train_period, self.minutes_back))
@@ -320,7 +322,7 @@ class Agent(object):
         self.EPS_START = 0.9
         self.EPS_END = 0.001
         self.EPS_DECAY = 30000  # Increasing in the hopes that it will help the model learn more about short term opportunities - used to be 10k
-        self.TARGET_UPDATE = 500# 3000
+        self.TARGET_UPDATE = 5000# 3000
         self.POLICY_UPDATE = 40  # Will update this actively in report (for now)
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
@@ -339,8 +341,8 @@ class Agent(object):
             print("\nGlobal start: ${}, current: :${}  -- ({}/{})".format(round(self.initial_market_value*scale, 2), ask*scale, step, total))
             print("Market moved ${} over the session".format(round((ask*scale) - self.session_begin_value,2)))
             print("Start: ${}, current: ${}".format(round(self.initial_market_value*scale,3), round(ask*scale,3)))
-            print("     Session wins: {} @ $ {}, avg hold: {} steps".format(len(self.gains), self.investment_scale*round(sum(self.gains)/(len(self.gains)+1),3), round(sum(self.gain_hold)/(len(self.gain_hold)+1),0)))
-            print("     Session loss: {} @ ${}, avg hold: {} steps".format(len(self.losses), self.investment_scale*round(sum(self.losses)/(len(self.losses)+1),3), round(sum(self.loss_hold)/(len(self.loss_hold)+1),0)))
+            print("     Session wins: {} @ $ {}, avg hold: {} steps".format(len(self.gains), self.investment_scale*round(sum(self.gains)/(len(self.gains)+1),5), round(sum(self.gain_hold)/(len(self.gain_hold)+1),0)))
+            print("     Session loss: {} @ ${}, avg hold: {} steps".format(len(self.losses), self.investment_scale*round(sum(self.losses)/(len(self.losses)+1),5), round(sum(self.loss_hold)/(len(self.loss_hold)+1),0)))
             print("     Session Net:  ${}".format(round(self.investment_scale*(sum(self.gains) + sum(self.losses)),2)))  # Losses are already negative
             print("     Episode total: ${}\n\n\n".format(round(self.investment_scale*self.episode_profit,2)))
 
@@ -449,9 +451,14 @@ class Agent(object):
                 else:
                     temp_reward = reward  # Current reward from this grade
 
+                if action.item() == 1:
+                    temp_reward /= self.hold_time
+
                 target = decision[4]
                 next_reward = decision[5]
                 self.memory.push(state_, properties, action, temp_reward, target, next_reward)
+            self.hold_time = 0
+
             self.trade_cycle = []
 
         #self.memory.push(state, properties, action, reward, target, next_reward)
@@ -639,7 +646,7 @@ class Agent(object):
                     reward = reward*(1 + self.hold_time/10)
                     #print("Rewa: ${}\n".format(reward))
 
-                self.hold_time = 0
+                #self.hold_time = 0  # Moved into trade_cycle calc section
 
         return torch.tensor([reward]).type('torch.FloatTensor')
 
