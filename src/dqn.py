@@ -327,7 +327,8 @@ class Agent(object):
         self.EPS_DECAY = 30000  # Increasing in the hopes that it will help the model learn more about short term opportunities - used to be 10k
         self.TARGET_UPDATE = 2000# 3000
         self.POLICY_UPDATE = 40  # Will update this actively in report (for now)
-        self.optimizer = optim.RMSprop(self.policy_net.parameters())
+        #self.optimizer = optim.RMSprop(self.policy_net.parameters())
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
         self.total_steps = 0
         self.BATCH_SIZE = 1024
         self.hold_penalty = np.inf  # How long do we want to hold a falling asset?
@@ -792,9 +793,9 @@ class execute(object):
                 #    print("New investment = $", self.agent.investment_scale)
 
                 # Update target network
-                if i%self.agent.TARGET_UPDATE:
+                if i%self.agent.TARGET_UPDATE == 0:
 
-                    #print("Updating target net...({}/{})".format(i, episode.shape[0]))
+                    print("Updating target net...({}/{})".format(i, episode.shape[0]))
                     self.agent.target_net.load_state_dict(self.agent.policy_net.state_dict())
             
                 self.agent.last_ask = ask
