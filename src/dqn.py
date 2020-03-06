@@ -116,8 +116,10 @@ class MultiPhase(nn.Module):
         dec = F.relu(self.DLn1(self.dn1(ind)))
         dec = F.relu(self.DLn2(self.dn2(dec)))
         dec = F.relu(self.DLn3(self.dn3(dec)))
+        dec = self.dn4(dec)
+        dec = F.softmax(dec, dim=0)
 
-        return F.softmax(self.dn4(dec))
+        return dec
 
 class DQN(nn.Module):
 
@@ -286,7 +288,7 @@ class Agent(object):
         self.hold_time = 0
 
         # Memory
-        self.mem_capacity = 100000
+        self.mem_capacity = 40000
         self.memory = ReplayMemory(self.mem_capacity)
 
         # Financial parameters
@@ -323,7 +325,7 @@ class Agent(object):
         self.EPS_START = 0.9
         self.EPS_END = 0.001
         self.EPS_DECAY = 30000  # Increasing in the hopes that it will help the model learn more about short term opportunities - used to be 10k
-        self.TARGET_UPDATE = 5000# 3000
+        self.TARGET_UPDATE = 2000# 3000
         self.POLICY_UPDATE = 40  # Will update this actively in report (for now)
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.total_steps = 0
@@ -442,24 +444,32 @@ class Agent(object):
         if action == 2:
             #print("Trade length: {}, ${}".format(len(self.trade_cycle), reward*self.investment_scale))
             temp_reward = 0
-            counter = 1
+            #counter = 1
+            already_bought = False
             for decision in self.trade_cycle:
                 state_ = decision[0]
                 properties = decision[1]
                 action = decision[2]
 
+                if action == 0 and decision[3] != -1:
+                    already_bought = True
+
                 if decision[3] == -1:
                     temp_reward = decision[3]  # Punish illegal actions
                 else:
-                    temp_reward = reward  # Current reward from this grade
+                    if reward > 0:
+                        temp_reward = reward/(1 + self.hold_time/50)  # Current reward from this trade
+                    else:
+                        temp_reward = reward
 
-                if action.item() == 1:
-                    temp_reward /= counter  # Counter is a surrogate for self.hold_time. Want to reward holding less as we hold longer
+                #if action.item() == 1 and already_bought:
+                #    temp_reward /= counter  # Counter is a surrogate for self.hold_time. Want to reward holding less as we hold longer
 
                 target = decision[4]
                 next_reward = decision[5]
                 self.memory.push(state_, properties, action, temp_reward, target, next_reward)
-                counter += 0.1
+                #counter += 0
+
             self.hold_time = 0
 
             self.trade_cycle = []
@@ -715,8 +725,8 @@ class execute(object):
 
         # Params for initializing the environment
         self.asset = 'ETH'
-        self.minutes_back = 10
-        self.period = 15
+        self.minutes_back = 20
+        self.period = 30
         self.params = ['ask']
 
         # Initialize the environment
