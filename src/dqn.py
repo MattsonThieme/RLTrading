@@ -18,6 +18,7 @@
 # Try making penalty for illegal moves smaller, might be throwing things off
 # Integrate reward parser from multiphase
 
+
 import math
 import random
 import time
@@ -97,11 +98,13 @@ class MultiPhase(nn.Module):
         #else:
         #    inp.unsqueeze_(0)
 
+        # Sequence network
         self.out, self.hidden = self.lstm_layer(inp, self.hidden)
 
+        # Legality network
         legal = F.relu(self.LLn1(self.ln1(properties)))
         legal = F.relu(self.LLn2(self.ln2(legal)))
-        legal = F.relu(self.ln3(legal))
+        legal = self.ln3(legal)
 
         # Decision network
         if self.out.shape[1] == 1:
@@ -280,7 +283,7 @@ class Agent(object):
         self.hold_time = 0
 
         # Memory
-        self.mem_capacity = 10000
+        self.mem_capacity = 100000
         self.memory = ReplayMemory(self.mem_capacity)
 
         # Financial parameters
@@ -382,14 +385,17 @@ class Agent(object):
         #self.testA = list(self.policy_net.parameters())[0]
         rand = random.random()
         epsilon_threshold = self.EPS_END + (self.EPS_START - self.EPS_END)*math.exp(-1. * self.total_steps/self.EPS_DECAY)
+        
+        # Stop randomness 
         #if self.total_steps > self.EPS_DECAY:
         #    epsilon_threshold = -1
+
         self.total_steps += 1
         if rand > epsilon_threshold:
             with torch.no_grad():
                 action = self.policy_net(state, properties).max(0)[1].view(1,1)  # Returns the index of the maximum output in a 1x1 tensor
                 #if action != 1:
-                print("Action: ", action, ", ", self.policy_net(state, properties), ", ", self.total_steps)
+                #print("Action: ", action, ", ", self.policy_net(state, properties), ", ", self.total_steps)
                 #values, indices = torch.max(self.policy_net(state, properties), 0)
                 #print(self.policy_net(state, properties))
                 #print("Values: {}, indices: {}".format(values, indices))
@@ -397,11 +403,19 @@ class Agent(object):
                 #if action[0][0].item() == 0:
                 #    print("action")
         else:
-            
             action = torch.tensor([[random.randrange(self.n_actions)]], device=device, dtype=torch.long)
+            #print("Chose {} randomly, {}, {}".format(action.item(), epsilon_threshold, self.total_steps))
             #if self.asset_status == 1 and action == 2:
             #    print("Sold randomly ({})...".format(action.item()))
 
+        '''
+        if action.item() == 0:
+            print("Bought")
+        if action.item() == 1:
+            print("   Hold")
+        if action.item() == 2:
+            print("   ----SOLD----")
+        '''
         reward = self.reward_calc(action, self.asset_status, self.investment, self.bought, self.hold_time, self.fee, ask)
 
         # Calculate target values
@@ -424,17 +438,20 @@ class Agent(object):
         # Assign all past actions to the value of this sale
         if action == 2:
             #print("Trade length: {}, ${}".format(len(self.trade_cycle), reward*self.investment_scale))
+            temp_reward = 0
             for decision in self.trade_cycle:
                 state_ = decision[0]
                 properties = decision[1]
                 action = decision[2]
+
                 if decision[3] == -1:
-                    reward = decision[3]
+                    temp_reward = decision[3]  # Punish illegal actions
                 else:
-                    reward = reward  # Current reward from this grade
+                    temp_reward = reward  # Current reward from this grade
+
                 target = decision[4]
                 next_reward = decision[5]
-                self.memory.push(state_, properties, action, reward, target, next_reward)
+                self.memory.push(state_, properties, action, temp_reward, target, next_reward)
             self.trade_cycle = []
 
         #self.memory.push(state, properties, action, reward, target, next_reward)
