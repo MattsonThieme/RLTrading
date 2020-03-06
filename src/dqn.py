@@ -14,9 +14,10 @@
 
 # Can load previously trained models, train them again with more randomness and things improve!
 
+# Integrate reward parser from multiphase - merge target and standard
 
-# Try making penalty for illegal moves smaller, might be throwing things off
-# Integrate reward parser from multiphase
+
+# Increase investment as episode_total increases
 
 
 import math
@@ -441,6 +442,7 @@ class Agent(object):
         if action == 2:
             #print("Trade length: {}, ${}".format(len(self.trade_cycle), reward*self.investment_scale))
             temp_reward = 0
+            counter = 1
             for decision in self.trade_cycle:
                 state_ = decision[0]
                 properties = decision[1]
@@ -452,11 +454,12 @@ class Agent(object):
                     temp_reward = reward  # Current reward from this grade
 
                 if action.item() == 1:
-                    temp_reward /= self.hold_time
+                    temp_reward /= counter  # Counter is a surrogate for self.hold_time. Want to reward holding less as we hold longer
 
                 target = decision[4]
                 next_reward = decision[5]
                 self.memory.push(state_, properties, action, temp_reward, target, next_reward)
+                counter += 0.1
             self.hold_time = 0
 
             self.trade_cycle = []
@@ -761,16 +764,22 @@ class execute(object):
                 # Optimize the agent according to that action
                 if i%self.agent.POLICY_UPDATE == 0:
                     #print("Optimizing...")
-                    self.agent.testA = list(self.agent.policy_net.parameters())[0].clone()
+                    #self.agent.testA = list(self.agent.policy_net.parameters())[0].clone()
                     
                     self.agent.optimize_model(self.agent.BATCH_SIZE)
                     #print("Grad0: ", list(self.agent.policy_net.parameters())[0].grad)
-                    self.agent.testB = list(self.agent.policy_net.parameters())[0].clone()
+                    #self.agent.testB = list(self.agent.policy_net.parameters())[0].clone()
 
                     #print("Policies equivalent: ", torch.equal(self.agent.testA, self.agent.testB))
 
                 # Output training info
                 self.agent.report(ask, self.env.scale, i, episode.shape[0], last=False)
+
+
+                # Increase our investment as we win - not correct
+                #if self.agent.episode_profit > 0:
+                #    self.agent.investment_scale += self.agent.investment_scale*self.agent.episode_profit
+                #    print("New investment = $", self.agent.investment_scale)
 
                 # Update target network
                 if i%self.agent.TARGET_UPDATE:
