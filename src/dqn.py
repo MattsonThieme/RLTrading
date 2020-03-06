@@ -325,10 +325,10 @@ class Agent(object):
         self.EPS_START = 0.9
         self.EPS_END = 0.001
         self.EPS_DECAY = 30000  # Increasing in the hopes that it will help the model learn more about short term opportunities - used to be 10k
-        self.TARGET_UPDATE = 2000# 3000
-        self.POLICY_UPDATE = 40  # Will update this actively in report (for now)
-        #self.optimizer = optim.RMSprop(self.policy_net.parameters())
-        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
+        self.TARGET_UPDATE = 10000# 3000
+        self.POLICY_UPDATE = 500  # Will update this actively in report (for now)
+        self.optimizer = optim.RMSprop(self.policy_net.parameters())
+        #self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
         self.total_steps = 0
         self.BATCH_SIZE = 1024
         self.hold_penalty = np.inf  # How long do we want to hold a falling asset?
