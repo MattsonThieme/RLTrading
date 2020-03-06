@@ -152,7 +152,7 @@ class Env(object):
         self.bought = 0
         self.hold_time = 0
 
-        self.num_episodes = 1  # Somewhat defunct with new data-loader, but will keep for now
+        self.num_episodes = 10  # Somewhat defunct with new data-loader, but will keep for now
         self.train_params = params  # ['ask']
         self.train_env = None
         self.train_ask = None
@@ -288,7 +288,7 @@ class Agent(object):
         self.hold_time = 0
 
         # Memory
-        self.mem_capacity = 40000
+        self.mem_capacity = 100000
         self.memory = ReplayMemory(self.mem_capacity)
 
         # Financial parameters
@@ -325,12 +325,12 @@ class Agent(object):
         self.EPS_START = 0.9
         self.EPS_END = 0.001
         self.EPS_DECAY = 30000  # Increasing in the hopes that it will help the model learn more about short term opportunities - used to be 10k
-        self.TARGET_UPDATE = 10000# 3000
-        self.POLICY_UPDATE = 500  # Will update this actively in report (for now)
+        self.TARGET_UPDATE = 46000# 3000
+        self.POLICY_UPDATE = 3000  # Will update this actively in report (for now)
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         #self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
         self.total_steps = 0
-        self.BATCH_SIZE = 1024
+        self.BATCH_SIZE = 2048  #1024
         self.hold_penalty = np.inf  # How long do we want to hold a falling asset?
         self.max_reward_multiplier = 2
         self.reward_turning_point = 160  # 40 mins at 15s period
@@ -725,7 +725,7 @@ class execute(object):
     def __init__(self):
 
         # Params for initializing the environment
-        self.asset = 'ETH'
+        self.asset = 'CVC'
         self.minutes_back = 20
         self.period = 30
         self.params = ['ask']
@@ -742,76 +742,97 @@ class execute(object):
 
 
     def trade(self):
-        # Iterate over states
-        for e, episode in enumerate(self.env.train_env):
 
-            torch.save(self.agent.policy_net.state_dict(),"{}_policy_{}p_{}m_{}.pt".format(self.asset, self.period, self.minutes_back, datetime.datetime.now()))
-            
-            self.agent.last_ask = self.env.train_ask[e][0]
-            print("Last ask: ", self.agent.last_ask)
-            # Reset environments with each episode
-            self.agent.reset()
-            self.env.reset()
-            
-            for i, state in enumerate(episode[:episode.shape[0]-1]):
+        for j in range(self.env.num_episodes):
 
-                ask = self.env.train_ask[e][i]
-                next_ask = self.env.train_ask[e][i+1]
-                next_state = self.env.train_env[e][i+1]
+            print("\n\n\nEpoch {}\n\n\n".format(j))
+            # Iterate over states
+            self.agent.total_steps = 0
 
-                #print("State shape: ", state.shape)
-                if len(state.shape) == 1:
-                    #print("here")
-                    state = state.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim] - needed for LSTM
-                    next_state = next_state.unsqueeze_(0).unsqueeze_(0)
-                else:
-                    state.unsqueeze_(0)
-                    next_state.unsqueeze_(0)
+            for e, episode in enumerate(self.env.train_env):
 
-                #print("New shape: ", state.shape)
-                # Take an action
-                self.agent.take_action(state, self.agent.gen_properties(), self.agent.last_ask, ask, next_state, next_ask)
+                torch.save(self.agent.policy_net.state_dict(),"{}_policy_{}p_{}m_{}.pt".format(self.asset, self.period, self.minutes_back, datetime.datetime.now()))
+                
+                self.agent.last_ask = self.env.train_ask[e][0]
+                print("Last ask: ", self.agent.last_ask)
+                # Reset environments with each episode
+                self.agent.reset()
+                self.env.reset()
+                
+                for i, state in enumerate(episode[:episode.shape[0]-1]):
 
-                # Optimize the agent according to that action
-                if i%self.agent.POLICY_UPDATE == 0:
-                    #print("Optimizing...")
-                    #self.agent.testA = list(self.agent.policy_net.parameters())[0].clone()
-                    
-                    self.agent.optimize_model(self.agent.BATCH_SIZE)
-                    #print("Grad0: ", list(self.agent.policy_net.parameters())[0].grad)
-                    #self.agent.testB = list(self.agent.policy_net.parameters())[0].clone()
+                    '''
+                    if i == 15000:
+                        self.agent.POLICY_UPDATE == 250
+                        self.agent.TARGET_UPDATE == 5000
+                        print("POLICY_UPDATE = ", self.agent.POLICY_UPDATE)
+                    if i == 30000:
+                        self.agent.POLICY_UPDATE == 100
+                        self.agent.TARGET_UPDATE == 2000
+                        print("POLICY_UPDATE = ", self.agent.POLICY_UPDATE)
+                    if i == 40000:
+                        self.agent.POLICY_UPDATE == 50
+                        self.agent.TARGET_UPDATE == 1000
+                        print("POLICY_UPDATE = ", self.agent.POLICY_UPDATE)
+                    '''
 
-                    #print("Policies equivalent: ", torch.equal(self.agent.testA, self.agent.testB))
+                    ask = self.env.train_ask[e][i]
+                    next_ask = self.env.train_ask[e][i+1]
+                    next_state = self.env.train_env[e][i+1]
+
+                    #print("State shape: ", state.shape)
+                    if len(state.shape) == 1:
+                        #print("here")
+                        state = state.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim] - needed for LSTM
+                        next_state = next_state.unsqueeze_(0).unsqueeze_(0)
+                    else:
+                        state.unsqueeze_(0)
+                        next_state.unsqueeze_(0)
+
+                    #print("New shape: ", state.shape)
+                    # Take an action
+                    self.agent.take_action(state, self.agent.gen_properties(), self.agent.last_ask, ask, next_state, next_ask)
+
+                    # Optimize the agent according to that action
+                    if i%self.agent.POLICY_UPDATE == 0:
+                        #print("Optimizing...")
+                        #self.agent.testA = list(self.agent.policy_net.parameters())[0].clone()
+                        
+                        self.agent.optimize_model(self.agent.BATCH_SIZE)
+                        #print("Grad0: ", list(self.agent.policy_net.parameters())[0].grad)
+                        #self.agent.testB = list(self.agent.policy_net.parameters())[0].clone()
+
+                        #print("Policies equivalent: ", torch.equal(self.agent.testA, self.agent.testB))
+
+                    # Output training info
+                    self.agent.report(ask, self.env.scale, i, episode.shape[0], last=False)
+
+
+                    # Increase our investment as we win - not correct
+                    #if self.agent.episode_profit > 0:
+                    #    self.agent.investment_scale += self.agent.investment_scale*self.agent.episode_profit
+                    #    print("New investment = $", self.agent.investment_scale)
+
+                    # Update target network
+                    if i%self.agent.TARGET_UPDATE == 0:
+
+                        print("Updating target net...({}/{})".format(i, episode.shape[0]))
+                        self.agent.target_net.load_state_dict(self.agent.policy_net.state_dict())
+                
+                    self.agent.last_ask = ask
+
+                # Store transitions in an array, go through that array here and push them into memory (make memory of length 40k), assigning them all the reward from the whole episode
+                # Run 40 optimizations at BS 1024 here, then go onto the next episode
+                # Make EPS_DECAY = 100k or something, maybe more. Training will be much faster if we don't update every time we make a trade
 
                 # Output training info
-                self.agent.report(ask, self.env.scale, i, episode.shape[0], last=False)
+                self.agent.report(self.env.train_ask[e][i], self.env.scale, i, episode.shape[0], last=True)  # Show the final result at the end of the episode
+                print("#"*30)
+                print("\nCompleted episode {} of {}\n".format(e, self.env.train_env.shape[0]))
+                print("#"*30)
 
-
-                # Increase our investment as we win - not correct
-                #if self.agent.episode_profit > 0:
-                #    self.agent.investment_scale += self.agent.investment_scale*self.agent.episode_profit
-                #    print("New investment = $", self.agent.investment_scale)
-
-                # Update target network
-                if i%self.agent.TARGET_UPDATE == 0:
-
-                    print("Updating target net...({}/{})".format(i, episode.shape[0]))
-                    self.agent.target_net.load_state_dict(self.agent.policy_net.state_dict())
-            
-                self.agent.last_ask = ask
-
-            # Store transitions in an array, go through that array here and push them into memory (make memory of length 40k), assigning them all the reward from the whole episode
-            # Run 40 optimizations at BS 1024 here, then go onto the next episode
-            # Make EPS_DECAY = 100k or something, maybe more. Training will be much faster if we don't update every time we make a trade
-
-            # Output training info
-            self.agent.report(self.env.train_ask[e][i], self.env.scale, i, episode.shape[0], last=True)  # Show the final result at the end of the episode
-            print("#"*30)
-            print("\nCompleted episode {} of {}\n".format(e, self.env.train_env.shape[0]))
-            print("#"*30)
-
-            # Save policy every episode
-            torch.save(self.agent.policy_net.state_dict(),"{}_policy_{}p_{}m.pt".format(self.asset, self.period, self.minutes_back))
+                # Save policy every episode
+                torch.save(self.agent.policy_net.state_dict(),"{}_policy_{}p_{}m.pt".format(self.asset, self.period, self.minutes_back))
 
 
 # TODO: Add some parameters here so it's easier to prototype
