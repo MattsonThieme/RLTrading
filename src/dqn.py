@@ -1,24 +1,9 @@
 
 ## TODO ##
 
-# In case I forget: the problem we need to solve is how to keep the average step time
-# down. Initially, it can make $1/4 steps, or a dollar a minute, but then it starts looking
-# for longer opportunities and the $/min goes way down.
-
-# My "reward scaling" on profits might be driving them towards steps around 100
-
 # Need to build a testing class - load new dataset, run over it with no_grad, report as usual
-
-# Try rewarding it with the episode reward - maybe we're putting too much emphasis on individual trades
-# Would need to increase the EPS_DECAY way up, such that we have dozens or hundreds of trips through the entire dataset with a good bit of randomness
-
-# Can load previously trained models, train them again with more randomness and things improve!
-
-# Integrate reward parser from multiphase - merge target and standard
-
-
-# Increase investment as episode_total increases
-
+# Point to appropriate data folder
+# Store 
 
 import math
 import random
@@ -27,8 +12,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from collections import namedtuple
 import csv
-from itertools import islice
-import datetime
+import configuration
 
 import torch
 import torch.nn as nn
@@ -38,12 +22,12 @@ from torch.autograd import Variable
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# Transition states for updating the model
 Transition = namedtuple('Transition',
                         ('state', 'properties', 'action', 'reward', 'target', 'next_action'))
 
-
 # This model has three parts
-# 1) An LSTM processing only price history data
+# 1) An LSTM network processing only price history data
 # 2) A 'legality network' looking at asset_status, bought price, hold_time to determine if certain actions are legal
 # 3) A 'decision network' looking at the output of 1) and 2) to make the final decision
 class MultiPhase(nn.Module):
@@ -54,7 +38,6 @@ class MultiPhase(nn.Module):
         self.hidden_dim = hidden_dim  # Note: output_dim for LSTM = hidden_dim for now
         self.n_layers = n_layers
         self.lstm_layer = nn.LSTM(self.input_dim, self.hidden_dim, self.n_layers, batch_first=True)
-        #self.lstm_layer = nn.GRU(self.input_dim, self.hidden_dim, self.n_layers, batch_first=True)
 
         self.batch_size = 1
         self.seq_len = 1
@@ -67,7 +50,7 @@ class MultiPhase(nn.Module):
         # Legality network
         # Haven't included dropout here because properties are deterministic and not noisy
         prop_length = properties.size()[0]
-        dec_size = 8  # Size of the final embedding, try some diff vals
+        dec_size = 8  # Size of the final embedding of the legality network, can try other values
         self.ln1 = nn.Linear(prop_length, 128)
         self.LLn1 = nn.LayerNorm(128)
         self.ln2 = nn.Linear(128, 64)
@@ -86,18 +69,9 @@ class MultiPhase(nn.Module):
 
         self.dropout = nn.Dropout(p=0.2)
 
-    def reshape(self, x):
-        return Variable(x.unsqueeze_(0).unsqueeze_(0))
-
     def forward(self, x, properties):
         inp = Variable(x)
-        #inp = Variable(inp)
         properties = Variable(properties)
-        # Handle various batch sizes between regular state vs. transition history - not very elegant, but it works
-        #if len(inp.shape) == 1:
-        #    inp = self.reshape(inp)#inp.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim] - needed for LSTM
-        #else:
-        #    inp.unsqueeze_(0)
 
         # Sequence network
         self.out, self.hidden = self.lstm_layer(inp, self.hidden)
@@ -107,7 +81,7 @@ class MultiPhase(nn.Module):
         legal = F.relu(self.LLn2(self.ln2(legal)))
         legal = self.ln3(legal)
 
-        # Decision network
+        # Decision network - handle batches
         if self.out.shape[1] == 1:
             ind = torch.cat((legal, self.out.squeeze(0).squeeze(0)),0).to(device)  # Squeeze out tensor to recast to [hidden_dim]
         else:
@@ -121,6 +95,7 @@ class MultiPhase(nn.Module):
 
         return dec
 
+# Simple MLP model to verify functionality
 class DQN(nn.Module):
 
     def __init__(self, in_dim, out_dim):
@@ -136,7 +111,7 @@ class DQN(nn.Module):
         x = F.relu(self.fc3(x))
         return self.fc4(x)
 
-
+# Environment object which creates/stores datasets
 class Env(object):
 
     def __init__(self, assets, minutes_back, period, params):
@@ -166,18 +141,17 @@ class Env(object):
         self.bought = 0
         self.hold_time = 0
 
-
     def load_data(self):
         try:
+            self.train_env = torch.load('../data/crypto/{}_ask_p{}s_l{}m_env.pt'.format(self.assets, self.train_period, self.minutes_back))
+            self.train_ask = torch.load('../data/crypto/{}_ask_p{}s_l{}m_ask.pt'.format(self.assets, self.train_period, self.minutes_back))
             print("Loading {}_ask_p{}s_l{}m_env.pt".format(self.assets, self.train_period, self.minutes_back))
-            self.train_env = torch.load('{}_ask_p{}s_l{}m_env.pt'.format(self.assets, self.train_period, self.minutes_back))
-            self.train_ask = torch.load('{}_ask_p{}s_l{}m_ask.pt'.format(self.assets, self.train_period, self.minutes_back))
         except:
             print("Creating {}_ask_p{}s_l{}m_env.pt".format(self.assets, self.train_period, self.minutes_back))
-            self.data_path = '/Users/mattsonthieme/Documents/Academic.nosync/Projects/RLTrading/data/crypto/ETH/ETH_1s_4.csv'
+            self.data_path = '../data/crypto/ETH/ETH_1s_4.csv'
             self.train_env, self.train_ask = self.parse_data(self.data_path, self.train_length, self.train_params, self.train_period)
-            torch.save(self.train_env, '{}_ask_p{}s_l{}m_env.pt'.format(self.assets, self.train_period, self.minutes_back))
-            torch.save(self.train_ask, '{}_ask_p{}s_l{}m_ask.pt'.format(self.assets, self.train_period, self.minutes_back))
+            torch.save(self.train_env, '../data/crypto/{}_ask_p{}s_l{}m_env.pt'.format(self.assets, self.train_period, self.minutes_back))
+            torch.save(self.train_ask, '../data/crypto/{}_ask_p{}s_l{}m_ask.pt'.format(self.assets, self.train_period, self.minutes_back))
 
     def normalize(self):
         # Normalize train_env/ask to [0,1]
@@ -230,7 +204,7 @@ class Env(object):
                         train_elem.extend(tempdata[j][begin:end])
                     
                     train_episode.append(train_elem)
-                    val_episode.append(tempdata[labels.index('ask')][end-1])
+                    val_episode.append(tempdata[labels.index('ask')][end-1])  # Only looking at ask price for now
 
                     begin += 1
                     end += 1
@@ -263,7 +237,6 @@ class ReplayMemory(object):
         self.memory[self.position] = Transition(*args)
         self.position = (self.position + 1) % self.capacity
 
-
     # Pull a random sample from memory
     def sample(self, batch_size):
         return random.sample(self.memory, batch_size)
@@ -271,7 +244,6 @@ class ReplayMemory(object):
     def _len(self):
         return len(self.memory)
 
-# Try rewarding it for profit/timestep
 class Agent(object):
 
     def __init__(self, policy, state_size):
@@ -292,8 +264,8 @@ class Agent(object):
         self.memory = ReplayMemory(self.mem_capacity)
 
         # Financial parameters
-        self.fee = 0.0#0075  # 0.075% for Binance  - 0: Robinhood on the scene
-        self.investment = 1#000
+        self.fee = 0.0  # 0.075% for Binance - 0% because Robinhood is on the scene!
+        self.investment = 1
         self.investment_scale = 1000  # Some numerical issues if actual investment is this high, so just scale what we report
         self.losses = []
         self.gains = []
@@ -308,11 +280,14 @@ class Agent(object):
         self.last_ask = 0
         self.trade_cycle = []
 
+        # Simple network for testing functionality
         if policy == 'mlp':
             self.policy_net = DQN(self.input_dimension, self.n_actions).to(device)
             self.target_net = DQN(self.input_dimension, self.n_actions).to(device)
             self.target_net.load_state_dict(self.policy_net.state_dict())
             self.target_net.eval()
+        
+        # Actual network for trading
         if policy == 'multiphase':
             self.n_layers = 1
             self.policy_net = MultiPhase(self.input_dimension, self.hidden_dim, self.n_actions, self.n_layers, self.gen_properties()).to(device)
@@ -324,13 +299,13 @@ class Agent(object):
         self.GAMMA = 0.999
         self.EPS_START = 0.9
         self.EPS_END = 0.001
-        self.EPS_DECAY = 30000  # Increasing in the hopes that it will help the model learn more about short term opportunities - used to be 10k
+        self.EPS_DECAY = 30000  # Increasing in the hopes that it will help the model learn more about short term opportunities - takes ~80k steps to get to its lower bound
         self.TARGET_UPDATE = 46000# 3000
         self.POLICY_UPDATE = 3000  # Will update this actively in report (for now)
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
-        #self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
+        #self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)  # Another optimizer - not sure which is optimal yet
         self.total_steps = 0
-        self.BATCH_SIZE = 2048  #1024
+        self.BATCH_SIZE = 2048
         self.hold_penalty = np.inf  # How long do we want to hold a falling asset?
         self.max_reward_multiplier = 2
         self.reward_turning_point = 160  # 40 mins at 15s period
@@ -339,6 +314,7 @@ class Agent(object):
     def update_target(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
+    # Report wins/losses every 20 wins
     def report(self, ask, scale, step, total, last):
         if (len(self.gains) >= 20) or (last):
 
@@ -350,20 +326,17 @@ class Agent(object):
             print("     Session Net:  ${}".format(round(self.investment_scale*(sum(self.gains) + sum(self.losses)),2)))  # Losses are already negative
             print("     Episode total: ${}\n\n\n".format(round(self.investment_scale*self.episode_profit,2)))
 
-            #if self.investment_scale*(sum(self.gains) + sum(self.losses)) > 50:
-            #    self.POLICY_UPDATE += 10
-            #    self.TARGET_UPDATE += 10
-            #    print("New policy_update: {}, Target update: {}".format(self.POLICY_UPDATE, self.TARGET_UPDATE))
             self.session_begin_value = ask*scale
             self.gains = []
             self.losses = []
             self.gain_hold = []
             self.loss_hold = []
 
+    # Generate new properties after each decision
     def gen_properties(self):
         return torch.tensor([self.asset_status, self.bought, 2.0/(self.hold_time+1)-1]).type('torch.FloatTensor')  # 2/self.hold_time because I think the enormous numbers are throwing off the L-network. Scales to [1, -1]
 
-
+    # Reset environment each episode
     def reset(self):
         # State parameters
         self.asset_status = 0
@@ -382,46 +355,22 @@ class Agent(object):
         self.gain_hold = []
         self.loss_hold = []
 
-
         self.testA = None
         self.testB = None
 
     # Return asset status, bought value, 
     def take_action(self, state, properties, last_ask, ask, next_env, next_ask):
-        #self.testA = list(self.policy_net.parameters())[0]
         rand = random.random()
         epsilon_threshold = self.EPS_END + (self.EPS_START - self.EPS_END)*math.exp(-1. * self.total_steps/self.EPS_DECAY)
-        
-        # Stop randomness 
-        #if self.total_steps > self.EPS_DECAY:
-        #    epsilon_threshold = -1
 
         self.total_steps += 1
         if rand > epsilon_threshold:
             with torch.no_grad():
                 action = self.policy_net(state, properties).max(0)[1].view(1,1)  # Returns the index of the maximum output in a 1x1 tensor
-                #if action != 1:
-                #print("Action: ", action, ", ", self.policy_net(state, properties), ", ", self.total_steps)
-                #values, indices = torch.max(self.policy_net(state, properties), 0)
-                #print(self.policy_net(state, properties))
-                #print("Values: {}, indices: {}".format(values, indices))
-                #print(action[0][0].item(), "lalala")
-                #if action[0][0].item() == 0:
-                #    print("action")
+
         else:
             action = torch.tensor([[random.randrange(self.n_actions)]], device=device, dtype=torch.long)
-            #print("Chose {} randomly, {}, {}".format(action.item(), epsilon_threshold, self.total_steps))
-            #if self.asset_status == 1 and action == 2:
-            #    print("Sold randomly ({})...".format(action.item()))
 
-        '''
-        if action.item() == 0:
-            print("Bought")
-        if action.item() == 1:
-            print("   Hold")
-        if action.item() == 2:
-            print("   ----SOLD----")
-        '''
         reward = self.reward_calc(action, self.asset_status, self.investment, self.bought, self.hold_time, self.fee, ask)
 
         # Calculate target values
@@ -441,11 +390,9 @@ class Agent(object):
         # Append trade to 
         self.trade_cycle.append([state, properties, action, reward, target, next_reward])
 
-        # Assign all past actions to the value of this sale
+        ##### Assign all past actions to the value of this sale #####
         if action == 2:
-            #print("Trade length: {}, ${}".format(len(self.trade_cycle), reward*self.investment_scale))
             temp_reward = 0
-            #counter = 1
             already_bought = False
             for decision in self.trade_cycle:
                 state_ = decision[0]
@@ -463,25 +410,15 @@ class Agent(object):
                     else:
                         temp_reward = reward
 
-                #if action.item() == 1 and already_bought:
-                #    temp_reward /= counter  # Counter is a surrogate for self.hold_time. Want to reward holding less as we hold longer
-
                 target = decision[4]
                 next_reward = decision[5]
+
+                # Push new state/action/target into memory
                 self.memory.push(state_, properties, action, temp_reward, target, next_reward)
-                #counter += 0
 
             self.hold_time = 0
 
             self.trade_cycle = []
-
-        #self.memory.push(state, properties, action, reward, target, next_reward)
-
-        # Try oversampling wins
-        #if (reward > 0) or (next_reward > 0):
-        #    for i in range(10):
-        #        self.memory.push(state, properties, action, reward, target, next_reward)
-
 
     def profit(self, ask):
         buy_cost = self.investment*self.fee
@@ -491,14 +428,9 @@ class Agent(object):
         reward = sold_revenue - sell_cost - buy_cost - self.investment
         return reward
 
-    def slope(self, last_ask, ask):
-        return ask - last_ask
-
     ## WARNING: Sketchy reward engineering ahead...
 
-    ## Could give reward in proportion to the slope. Positive reward for holding on a positive slope, negative for holding on a negative slope
-
-    # This separate calculator exists so we don't update the agen't state with the target reward calculation. Not ideal...
+    # This separate calculator exists so we don't update the agen't state with the target reward calculation. Not ideal but works for now...
     def target_reward_calc(self, action, asset_status, investment, bought, hold_time, fee, ask):
 
         reward = 0
@@ -511,8 +443,6 @@ class Agent(object):
 
             # Holding is legal, but don't hold forever
             if action == 1:
-                #reward = -1*self.hold_time/self.hold_penalty
-                #reward = -1*self.slope(self.last_ask, ask)
                 reward = 0
 
             # Selling is illegal
@@ -526,23 +456,8 @@ class Agent(object):
             if action == 0:
                 reward = -1
 
-            # Cost of holding is the opportunity cost of not selling
+            # Cost of holding is 0 - assigning value once we sell
             if action == 1:
-
-                if self.profit(ask) > 0:
-                    if self.slope(self.last_ask, ask) > 0:
-                        reward = self.profit(ask)
-                    else:
-                        reward = -1*self.profit(ask)
-                else:
-                    reward = -1*self.profit(ask)
-
-                # Scale this just like the reward for selling
-                if self.hold_time > self.reward_multiplier:
-                    reward = reward*self.reward_multiplier/self.hold_time  # Eh, scale this too
-                else:
-                    reward = reward*self.reward_multiplier/self.hold_time
-
                 reward = 0
 
             # Selling is legal
@@ -560,10 +475,6 @@ class Agent(object):
         
         return torch.tensor([reward]).type('torch.FloatTensor')
 
-
-
-    ### Try incentivising it to sell sooner. It's starting to hold for a long time
-    ### Try making the reward the total value, not just the immediate value
     def reward_calc(self, action, asset_status, investment, bought, hold_time, fee, ask):
 
         # Money is in our wallet
@@ -578,8 +489,6 @@ class Agent(object):
             # Holding is legal, but don't hold forever
             if action == 1:
                 self.hold_time += 1
-                #reward = -self.hold_time/self.hold_penalty
-                #reward = -1*self.slope(self.last_ask, ask)
                 reward = 0
 
             # Selling is illegal
@@ -595,30 +504,9 @@ class Agent(object):
                 self.hold_time += 1
                 reward = -1
 
-            # Cost of holding is the opportunity cost of not selling
+            # Cost of holding is 0 - assigning value once we sell
             if action == 1:
-
-
-                if self.profit(ask) > 0:
-                    if self.slope(self.last_ask, ask) > 0:
-                        reward = self.profit(ask)
-                    else:
-                        reward = -1*self.profit(ask)
-                else:
-                    reward = -1*self.profit(ask)
-
-                # Scale this just like the reward for selling
-                if self.hold_time > self.reward_multiplier:
-                    reward = reward*self.reward_multiplier/self.hold_time  # Eh, scale this too
-                else:
-                    reward = reward*self.reward_multiplier/self.hold_time
-
                 reward = 0
-                #if self.slope(self.last_ask, ask) > 0:
-                #    reward = self.profit(ask)
-                #else:
-                #    reward = -1*self.profit(ask)  #-self.hold_time/self.hold_penalty  # If we bought at a bad time, penalize holding an asset with falling value
-                
 
             # Selling is legal
             if action == 2:
@@ -628,39 +516,24 @@ class Agent(object):
                 self.episode_profit += reward
 
                 if reward > 0:
-                    #print("Gain: $ {}, bought at {}, sold at {} after {} steps".format(round(self.investment_scale*reward,2), round(self.bought,4), round(ask,4), self.hold_time))
                     self.gains.append(reward)
                     self.gain_buy_sell.append((round(self.bought,4), round(ask,4)))
                     self.gain_hold.append(self.hold_time)
                     self.profit_track.append(reward)
                     
-                    # Optimize for highest reward/time
-                    #print("Rewa: $ {}".format(reward))
-                    #reward *= 1.3*np.exp(-0.5*(self.hold_time/60)**2)  # Another magic number, start disincentivizing rewards after ~17 minutes
-                    #reward *= (-(self.max_reward_multiplier/self.reward_turning_point)*self.hold_time + self.max_reward_multiplier)
-                    #if self.hold_time > 50:
-                    #    reward *= -1
                     if self.hold_time > self.reward_multiplier:  # Let the reward stand if its greater than reward_multiplier, I just want to incentivize quicker trades
                         reward = reward*self.reward_multiplier/self.hold_time
                     else:
                         reward = reward*self.reward_multiplier/self.hold_time  # Increase value at < reward_multiplier time steps
-                    #print("Rewa: $ {}\n".format(reward))
-
 
                 if reward <= 0:
-                    #print("Loss: ${}, bought at {}, sold at {} after {} steps".format(round(self.investment_scale*reward,2), round(self.bought,4), round(ask,4), self.hold_time))
                     self.losses.append(reward)
                     self.loss_buy_sell.append((round(self.bought,4), round(ask,4)))
                     self.loss_hold.append(self.hold_time)
                     self.profit_track.append(reward)
-                    #reward *= np.log(2*self.hold_time)  # Penalize model for holding onto a losing trade proportional to the time it holds on
 
-                    # Optimize for highest reward/time
-                    #print("Rewa: ${}".format(reward))
-                    reward = reward*(1 + self.hold_time/10)
-                    #print("Rewa: ${}\n".format(reward))
-
-                #self.hold_time = 0  # Moved into trade_cycle calc section
+                    # Optimize for reward/time
+                    reward = reward*(1 + self.hold_time/10)  # Halves after ten steps - magic number for now
 
         return torch.tensor([reward]).type('torch.FloatTensor')
 
@@ -692,26 +565,20 @@ class Agent(object):
         batch_target = torch.cat(batch_target).squeeze(1).unsqueeze_(0).to(device)
         batch_next_action = torch.stack(batch_next_action).to(device)
 
-        #batch_state = batch_state.squeeze(1).unsqueeze_(0)
-        #print("Batch shape: ", batch_prop.shape)
-
-
-
         # State-action values
         state_action_values = self.policy_net(batch_state, batch_prop).gather(1, batch_action)
 
         # Target values
         expected_state_action_values = (batch_next_action[0]*self.GAMMA) + batch_reward
 
-        #loss = F.smooth_l1_loss(state_action_values, batch_reward.unsqueeze(1))
         loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
-        #print("loss = ",loss)
         self.optimizer.zero_grad()
         loss.backward(retain_graph=True)
-        # Don't want to do this because some trades are better than others and we want the network updates to reflect that
+
+        # Optional grad clamping - probably don't want to do this because some trades are better than others and we want the network updates to reflect that
         #for param in self.policy_net.parameters():  # restrict grad updates to (-1,1)
         #    param.grad.data.clamp_(-1,1)
-        #for i in range(100):
+
         self.optimizer.step()
 
     # Implement to actually send orders with ccxt
@@ -721,6 +588,7 @@ class Agent(object):
     def sell(self):
         raise NotImplementedError
 
+# Executor class to initialize agent/env and begin trading/training
 class execute(object):
     def __init__(self):
 
@@ -736,82 +604,54 @@ class execute(object):
         self.env.normalize()
 
         # Initialize the agent
-        self.agent = Agent('multiphase', self.env.train_env[0][0].size()[0])
-        #self.agent.policy_net.load_state_dict(torch.load('ETH_2X_policy_15p_30m_2020-02-24.pt'))
-        self.agent.initial_market_value = self.agent.investment_scale*self.env.train_ask[0][0]
-
+        state_size = self.env.train_env[0][0].size()[0]
+        self.agent = Agent('multiphase', state_size)
 
     def trade(self):
 
         for j in range(self.env.num_episodes):
 
             print("\n\n\nEpoch {}\n\n\n".format(j))
-            # Iterate over states
+            
             self.agent.total_steps = 0
 
+            # Iterate over states
             for e, episode in enumerate(self.env.train_env):
 
-                torch.save(self.agent.policy_net.state_dict(),"{}_policy_{}p_{}m_{}.pt".format(self.asset, self.period, self.minutes_back, datetime.datetime.now()))
+                torch.save(self.agent.policy_net.state_dict(),"{}_policy_{}p_{}m.pt".format(self.asset, self.period, self.minutes_back))
                 
                 self.agent.last_ask = self.env.train_ask[e][0]
-                print("Last ask: ", self.agent.last_ask)
+
                 # Reset environments with each episode
                 self.agent.reset()
                 self.env.reset()
-                
-                for i, state in enumerate(episode[:episode.shape[0]-1]):
 
-                    '''
-                    if i == 15000:
-                        self.agent.POLICY_UPDATE == 250
-                        self.agent.TARGET_UPDATE == 5000
-                        print("POLICY_UPDATE = ", self.agent.POLICY_UPDATE)
-                    if i == 30000:
-                        self.agent.POLICY_UPDATE == 100
-                        self.agent.TARGET_UPDATE == 2000
-                        print("POLICY_UPDATE = ", self.agent.POLICY_UPDATE)
-                    if i == 40000:
-                        self.agent.POLICY_UPDATE == 50
-                        self.agent.TARGET_UPDATE == 1000
-                        print("POLICY_UPDATE = ", self.agent.POLICY_UPDATE)
-                    '''
+                self.agent.initial_market_value = self.env.train_ask[0][0]
+                
+                # Iterate over all data
+                for i, state in enumerate(episode[:episode.shape[0]-1]):
 
                     ask = self.env.train_ask[e][i]
                     next_ask = self.env.train_ask[e][i+1]
                     next_state = self.env.train_env[e][i+1]
 
-                    #print("State shape: ", state.shape)
                     if len(state.shape) == 1:
-                        #print("here")
                         state = state.unsqueeze_(0).unsqueeze_(0)  # Cast to shape [1,1,input_dim] - needed for LSTM
                         next_state = next_state.unsqueeze_(0).unsqueeze_(0)
                     else:
                         state.unsqueeze_(0)
                         next_state.unsqueeze_(0)
 
-                    #print("New shape: ", state.shape)
                     # Take an action
                     self.agent.take_action(state, self.agent.gen_properties(), self.agent.last_ask, ask, next_state, next_ask)
 
                     # Optimize the agent according to that action
                     if i%self.agent.POLICY_UPDATE == 0:
-                        #print("Optimizing...")
-                        #self.agent.testA = list(self.agent.policy_net.parameters())[0].clone()
-                        
+                        print("Updating policy net...({}/{})".format(i, episode.shape[0]))
                         self.agent.optimize_model(self.agent.BATCH_SIZE)
-                        #print("Grad0: ", list(self.agent.policy_net.parameters())[0].grad)
-                        #self.agent.testB = list(self.agent.policy_net.parameters())[0].clone()
-
-                        #print("Policies equivalent: ", torch.equal(self.agent.testA, self.agent.testB))
 
                     # Output training info
                     self.agent.report(ask, self.env.scale, i, episode.shape[0], last=False)
-
-
-                    # Increase our investment as we win - not correct
-                    #if self.agent.episode_profit > 0:
-                    #    self.agent.investment_scale += self.agent.investment_scale*self.agent.episode_profit
-                    #    print("New investment = $", self.agent.investment_scale)
 
                     # Update target network
                     if i%self.agent.TARGET_UPDATE == 0:
@@ -820,10 +660,6 @@ class execute(object):
                         self.agent.target_net.load_state_dict(self.agent.policy_net.state_dict())
                 
                     self.agent.last_ask = ask
-
-                # Store transitions in an array, go through that array here and push them into memory (make memory of length 40k), assigning them all the reward from the whole episode
-                # Run 40 optimizations at BS 1024 here, then go onto the next episode
-                # Make EPS_DECAY = 100k or something, maybe more. Training will be much faster if we don't update every time we make a trade
 
                 # Output training info
                 self.agent.report(self.env.train_ask[e][i], self.env.scale, i, episode.shape[0], last=True)  # Show the final result at the end of the episode
@@ -838,6 +674,7 @@ class execute(object):
 # TODO: Add some parameters here so it's easier to prototype
 investment = 1
 model = 'multiphase'
+asset = 'ETH'
 
 beast = execute()
 beast.trade()
