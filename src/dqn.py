@@ -1,7 +1,5 @@
 
 ## TODO ##
-
-# Need to build a testing class - load new dataset, run over it with no_grad, report as usual
 # Point to appropriate data folder
 # Store 
 
@@ -9,7 +7,6 @@ import math
 import random
 import time
 import numpy as np
-import matplotlib.pyplot as plt
 from collections import namedtuple
 import csv
 import configuration
@@ -117,10 +114,10 @@ class Env(object):
     def __init__(self, assets, minutes_back, period, params):
         self.data_path = None
         self.assets = assets
-        self.minutes_back = minutes_back
-        self.train_period = period
-        self.train_length = minutes_back*60/period
-        self.params = params
+        self.minutes_back = configuration.minutes_back
+        self.train_period = configuration.period
+        self.train_length = self.minutes_back*60/self.train_period
+        self.params = configuration.params
 
         # Initial environment parameters
         self.asset_status = 0
@@ -148,7 +145,7 @@ class Env(object):
             print("Loading {}_ask_p{}s_l{}m_env.pt".format(self.assets, self.train_period, self.minutes_back))
         except:
             print("Creating {}_ask_p{}s_l{}m_env.pt".format(self.assets, self.train_period, self.minutes_back))
-            self.data_path = '../data/crypto/ETH/ETH_1s_4.csv'
+            self.data_path = configuration.data_path
             self.train_env, self.train_ask = self.parse_data(self.data_path, self.train_length, self.train_params, self.train_period)
             torch.save(self.train_env, '../data/crypto/{}_ask_p{}s_l{}m_env.pt'.format(self.assets, self.train_period, self.minutes_back))
             torch.save(self.train_ask, '../data/crypto/{}_ask_p{}s_l{}m_ask.pt'.format(self.assets, self.train_period, self.minutes_back))
@@ -260,13 +257,13 @@ class Agent(object):
         self.hold_time = 0
 
         # Memory
-        self.mem_capacity = 100000
+        self.mem_capacity = configuration.mem_capacity
         self.memory = ReplayMemory(self.mem_capacity)
 
         # Financial parameters
-        self.fee = 0.0  # 0.075% for Binance - 0% because Robinhood is on the scene!
+        self.fee = configuration.fee  # 0.075% for Binance - 0% because Robinhood is on the scene!
         self.investment = 1
-        self.investment_scale = 1000  # Some numerical issues if actual investment is this high, so just scale what we report
+        self.investment_scale = configuration.investment_scale  # Some numerical issues if actual investment is this high, so just scale what we report
         self.losses = []
         self.gains = []
         self.episode_profit = 0
@@ -296,20 +293,16 @@ class Agent(object):
             self.target_net.eval()
 
         # Learning parameters
-        self.GAMMA = 0.999
-        self.EPS_START = 0.9
-        self.EPS_END = 0.001
-        self.EPS_DECAY = 30000  # Increasing in the hopes that it will help the model learn more about short term opportunities - takes ~80k steps to get to its lower bound
-        self.TARGET_UPDATE = 46000# 3000
-        self.POLICY_UPDATE = 3000  # Will update this actively in report (for now)
+        self.GAMMA = configuration.GAMMA
+        self.EPS_START = configuration.EPS_START
+        self.EPS_END = configuration.EPS_END
+        self.EPS_DECAY = configuration.EPS_DECAY  # Increasing in the hopes that it will help the model learn more about short term opportunities - takes ~80k steps to get to its lower bound
+        self.TARGET_UPDATE = configuration.TARGET_UPDATE
+        self.POLICY_UPDATE = configuration.POLICY_UPDATE  # Will update this actively in report (for now)
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         #self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)  # Another optimizer - not sure which is optimal yet
-        self.total_steps = 0
-        self.BATCH_SIZE = 2048
-        self.hold_penalty = np.inf  # How long do we want to hold a falling asset?
-        self.max_reward_multiplier = 2
-        self.reward_turning_point = 160  # 40 mins at 15s period
-        self.reward_multiplier = 1  # Rewards are pretty sparse, we want to pump them up a bit
+        self.total_steps = configuration.total_steps
+        self.BATCH_SIZE = configuration.BATCH_SIZE
 
     def update_target(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -364,6 +357,10 @@ class Agent(object):
         epsilon_threshold = self.EPS_END + (self.EPS_START - self.EPS_END)*math.exp(-1. * self.total_steps/self.EPS_DECAY)
 
         self.total_steps += 1
+
+        if self.total_steps % self.POLICY_UPDATE == 0:
+            print("Epsilon threshold: ", epsilon_threshold)
+
         if rand > epsilon_threshold:
             with torch.no_grad():
                 action = self.policy_net(state, properties).max(0)[1].view(1,1)  # Returns the index of the maximum output in a 1x1 tensor
@@ -371,7 +368,7 @@ class Agent(object):
         else:
             action = torch.tensor([[random.randrange(self.n_actions)]], device=device, dtype=torch.long)
 
-        reward = self.reward_calc(action, self.asset_status, self.investment, self.bought, self.hold_time, self.fee, ask)
+        reward = self.reward_calc(action, self.asset_status, self.investment, self.bought, self.hold_time, self.fee, ask, target_calc=False)
 
         # Calculate target values
         target = next_env
@@ -385,40 +382,44 @@ class Agent(object):
             next_action = self.target_net(target, next_properties).max(0)[1].view(1,1)
 
             # All local values were updated with the last reward_calc
-            next_reward = self.target_reward_calc(next_action, self.asset_status, self.investment, self.bought, self.hold_time, self.fee, next_ask)
+            next_reward = self.reward_calc(next_action, self.asset_status, self.investment, self.bought, self.hold_time, self.fee, next_ask, target_calc=True)
 
         # Append trade to 
         self.trade_cycle.append([state, properties, action, reward, target, next_reward])
 
         ##### Assign all past actions to the value of this sale #####
+
         if action == 2:
-            temp_reward = 0
-            already_bought = False
-            for decision in self.trade_cycle:
-                state_ = decision[0]
-                properties = decision[1]
-                action = decision[2]
+            self.assign_rewards(reward)
 
-                if action == 0 and decision[3] != -1:
-                    already_bought = True
+    # Assign rewards to every decision leading up to this purchase
+    def assign_rewards(self, reward):
+        temp_reward = 0
+        already_bought = False
+        for decision in self.trade_cycle:
+            state_ = decision[0]
+            properties = decision[1]
+            action = decision[2]
 
-                if decision[3] == -1:
-                    temp_reward = decision[3]  # Punish illegal actions
+            if action == 0 and decision[3] != -1:
+                already_bought = True
+
+            if decision[3] == -1:
+                temp_reward = decision[3]  # Punish illegal actions (keep existing reward)
+            else:
+                if reward > 0:
+                    temp_reward = reward/(1 + self.hold_time/50)  # Current reward from this trade
                 else:
-                    if reward > 0:
-                        temp_reward = reward/(1 + self.hold_time/50)  # Current reward from this trade
-                    else:
-                        temp_reward = reward
+                    temp_reward = reward
 
-                target = decision[4]
-                next_reward = decision[5]
+            target = decision[4]
+            next_reward = decision[5]
 
-                # Push new state/action/target into memory
-                self.memory.push(state_, properties, action, temp_reward, target, next_reward)
+            # Push new state/action/target into memory
+            self.memory.push(state_, properties, action, temp_reward, target, next_reward)
 
-            self.hold_time = 0
-
-            self.trade_cycle = []
+        self.hold_time = 0
+        self.trade_cycle = []
 
     def profit(self, ask):
         buy_cost = self.investment*self.fee
@@ -428,25 +429,28 @@ class Agent(object):
         reward = sold_revenue - sell_cost - buy_cost - self.investment
         return reward
 
-    ## WARNING: Sketchy reward engineering ahead...
+    def reward_calc(self, action, asset_status, investment, bought, hold_time, fee, ask, target_calc):
 
-    # This separate calculator exists so we don't update the agen't state with the target reward calculation. Not ideal but works for now...
-    def target_reward_calc(self, action, asset_status, investment, bought, hold_time, fee, ask):
-
-        reward = 0
         # Money is in our wallet
         if self.asset_status == 0:
 
             # Buying is legal
             if action == 0:
+                if not target_calc:
+                    self.bought = ask
+                    self.asset_status = 1  # Money is now in the asset
                 reward = 0
 
             # Holding is legal, but don't hold forever
             if action == 1:
+                if not target_calc:
+                    self.hold_time += 1
                 reward = 0
 
             # Selling is illegal
             if action == 2:
+                if not target_calc:
+                    self.hold_time += 1
                 reward = -1
 
         # Money is in an asset
@@ -454,86 +458,38 @@ class Agent(object):
 
             # Buying is illegal
             if action == 0:
+                if not target_calc:
+                    self.hold_time += 1
                 reward = -1
-
-            # Cost of holding is 0 - assigning value once we sell
-            if action == 1:
-                reward = 0
-
-            # Selling is legal
-            if action == 2:
-                reward = self.profit(ask)
-
-                if reward > 0:
-                    if self.hold_time > self.reward_multiplier:
-                        reward = reward*self.reward_multiplier/self.hold_time
-                    else:
-                        reward = reward*self.reward_multiplier/self.hold_time  # Increase value at < reward_multiplier time steps
-                if reward <= 0:
-                    reward = reward*(1 + self.hold_time/10)
-            
-        
-        return torch.tensor([reward]).type('torch.FloatTensor')
-
-    def reward_calc(self, action, asset_status, investment, bought, hold_time, fee, ask):
-
-        # Money is in our wallet
-        if self.asset_status == 0:
-
-            # Buying is legal
-            if action == 0:
-                self.bought = ask
-                self.asset_status = 1  # Money is now in the asset
-                reward = 0
 
             # Holding is legal, but don't hold forever
             if action == 1:
-                self.hold_time += 1
-                reward = 0
-
-            # Selling is illegal
-            if action == 2:
-                self.hold_time += 1
-                reward = -1
-
-        # Money is in an asset
-        if self.asset_status == 1:
-
-            # Buying is illegal
-            if action == 0:
-                self.hold_time += 1
-                reward = -1
-
-            # Cost of holding is 0 - assigning value once we sell
-            if action == 1:
+                if not target_calc:
+                    self.hold_time += 1
                 reward = 0
 
             # Selling is legal
             if action == 2:
-                self.asset_status = 0  # Money is back in our wallet
+
+                if not target_calc:
+                    self.asset_status = 0  # Money is back in our wallet
                 
                 reward = self.profit(ask)
-                self.episode_profit += reward
 
-                if reward > 0:
+                if not target_calc:
+                    self.episode_profit += reward
+
+                # Update trackers
+                if reward > 0 and not target_calc:
                     self.gains.append(reward)
                     self.gain_buy_sell.append((round(self.bought,4), round(ask,4)))
                     self.gain_hold.append(self.hold_time)
                     self.profit_track.append(reward)
-                    
-                    if self.hold_time > self.reward_multiplier:  # Let the reward stand if its greater than reward_multiplier, I just want to incentivize quicker trades
-                        reward = reward*self.reward_multiplier/self.hold_time
-                    else:
-                        reward = reward*self.reward_multiplier/self.hold_time  # Increase value at < reward_multiplier time steps
-
-                if reward <= 0:
+                if reward <= 0 and not target_calc:
                     self.losses.append(reward)
                     self.loss_buy_sell.append((round(self.bought,4), round(ask,4)))
                     self.loss_hold.append(self.hold_time)
                     self.profit_track.append(reward)
-
-                    # Optimize for reward/time
-                    reward = reward*(1 + self.hold_time/10)  # Halves after ten steps - magic number for now
 
         return torch.tensor([reward]).type('torch.FloatTensor')
 
@@ -593,10 +549,10 @@ class execute(object):
     def __init__(self):
 
         # Params for initializing the environment
-        self.asset = 'CVC'
-        self.minutes_back = 20
-        self.period = 30
-        self.params = ['ask']
+        self.asset = configuration.asset
+        self.minutes_back = configuration.minutes_back
+        self.period = configuration.period
+        self.params = configuration.params
 
         # Initialize the environment
         self.env = Env(self.asset, self.minutes_back, self.period, self.params)
@@ -605,14 +561,16 @@ class execute(object):
 
         # Initialize the agent
         state_size = self.env.train_env[0][0].size()[0]
-        self.agent = Agent('multiphase', state_size)
+        self.agent = Agent(configuration.model_type, state_size)
 
     def trade(self):
 
         for j in range(self.env.num_episodes):
-
-            print("\n\n\nEpoch {}\n\n\n".format(j))
-            
+            print("\n\n")
+            print("#"*60)
+            print("\n\nEpoch {}/{}\n\n".format(j, self.env.num_episodes))
+            print("#"*60)
+            print("\n\n")
             self.agent.total_steps = 0
 
             # Iterate over states
@@ -671,11 +629,5 @@ class execute(object):
                 torch.save(self.agent.policy_net.state_dict(),"{}_policy_{}p_{}m.pt".format(self.asset, self.period, self.minutes_back))
 
 
-# TODO: Add some parameters here so it's easier to prototype
-investment = 1
-model = 'multiphase'
-asset = 'ETH'
-
 beast = execute()
 beast.trade()
-
