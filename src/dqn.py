@@ -313,7 +313,7 @@ class Agent(object):
 
             print("\nGlobal start: ${}, current: :${}  -- ({}/{})".format(round(self.initial_market_value*scale, 2), round(ask*scale,2), step, total))
             print("Market moved ${} over the session".format(round((ask*scale) - self.session_begin_value,2)))
-            print("Start: ${}, current: ${}".format(round(self.initial_market_value*scale,3), round(ask*scale,3)))
+            print("Start: ${}, current: ${}".format(round(self.initial_market_value*scale,2), round(ask*scale,2)))
             print("     Session wins: {} @ $ {}, avg hold: {} steps".format(len(self.gains), self.investment_scale*round(sum(self.gains)/(len(self.gains)+1),5), round(sum(self.gain_hold)/(len(self.gain_hold)+1),0)))
             print("     Session loss: {} @ ${}, avg hold: {} steps".format(len(self.losses), self.investment_scale*round(sum(self.losses)/(len(self.losses)+1),5), round(sum(self.loss_hold)/(len(self.loss_hold)+1),0)))
             print("     Session Net:  ${}".format(round(self.investment_scale*(sum(self.gains) + sum(self.losses)),2)))  # Losses are already negative

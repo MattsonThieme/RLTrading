@@ -82,9 +82,9 @@ Start: $12.434, current: $12.876
 
 Here, we can see that market moved down over the last 33 trades (20 profitable, 13 losses) and we made $8.45 - pretty good! We are also shown information about the global start (first ask price in the dataset) and the ask price of the current step. The term `avg hold` represents how long, on average, we held the asset before selling it, and the dollar value after the @ is the average value of all the profitable or unprofitable trades. We can also see that we've made a total of $33.84 over the entire episode.
 
-That's it! Tweak the model parameters and 
+That's it! Tweak the model parameters and see what helps you earn more money.
 
-:exclamation: Disclaimer :exclamation: the provided sample dataset is relatively small. Before deploying any trained models and making real trades, please collect more data and validate the model over a longer time period. We claim no responsibility for any losses incurred when deloying this model. 
+:exclamation::exclamation: Disclaimer :exclamation::exclamation: The provided sample dataset is very small (GitHub limits us to a max of 100Mb/file). Before deploying any trained models and making real trades, please collect more data using the provided scripts and validate the model over a longer time period. We claim no responsibility for any losses incurred when deloying this model. 
 
 ## Model
 
