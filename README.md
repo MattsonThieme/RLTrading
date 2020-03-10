@@ -80,12 +80,15 @@ Start: $12.434, current: $12.876
      Episode total: $33.84
 ``` 
 
-Here, we are shown information about the global start (first ask price in the dataset), the as price of the current step, as well as how much the market moved over the last 20 profitable trades. The term `avg hold` represents how long, on average, we held the asset before selling it. We can also see in this example, that we've made a total of $33.84 over the entire episode, and $8.45 over the last 20 wins and (in this case) 13 losses.
+Here, we can see that market moved down over the last 33 trades (20 profitable, 13 losses) and we made $8.45 - pretty good! We are also shown information about the global start (first ask price in the dataset) and the ask price of the current step. The term `avg hold` represents how long, on average, we held the asset before selling it, and the dollar value after the @ is the average value of all the profitable or unprofitable trades. We can also see that we've made a total of $33.84 over the entire episode.
 
-```diff
-- Disclaimer: the provided sample dataset is relatively small. Before deploying any trained models and making real trades, you will probably want to collect more data and validate the model over a longer time period. 
-```
+That's it! Tweak the model parameters and 
+
+:exclamation: Disclaimer :exclamation: the provided sample dataset is relatively small. Before deploying any trained models and making real trades, please collect more data and validate the model over a longer time period. We claim no responsibility for any losses incurred when deloying this model. 
+
 ## Model
+
+Now that the model is up and running, here are some details about what is going on under the hood.
 
 
 
