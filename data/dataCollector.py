@@ -2,6 +2,9 @@
 # Note: this collection script works but is a bit clunky - I'll push
 # a better version in the near future.
 
+# Also note: can't query most exchanges more than 5x/second or they'll ban 
+# you temporarily - it's mostly just annoying, so make sure you don't query too frequently.
+
 import datetime
 import time
 import ccxt
