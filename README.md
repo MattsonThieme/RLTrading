@@ -45,7 +45,7 @@ For this project, I have included sample data so you can get started right away,
 To run the collection script, I recommend using a terminal multiplexer like [tmux](https://www.hamvocke.com/blog/a-quick-and-easy-guide-to-tmux/) on a small AWS instance. Edit parameters at the top of the file including 'symbol' and 'delay' then run:
 
 ```{shell}
-python dataCollector.py
+$ python dataCollector.py
 ```
 
 This will create and continuously append a file with your target asset's ask price once every sampling period (delay). We'll see in subsequent sections how to use this new file for training (it's as simple as setting a single variable in the configuration file).
@@ -55,7 +55,7 @@ This will create and continuously append a file with your target asset's ask pri
 Change directory into `src/`:
 
 ```{shell}
-$ cd src
+$ cd src/
 ```
 
 This folder contains only two files: `configuration.py` and `dqn.py`. Within the `configuration.py` file, you will find all the most important training parameters. 
@@ -84,7 +84,7 @@ Here, we can see that market moved down over the last 33 trades (20 profitable, 
 
 That's it! Tweak the model parameters and see what helps you earn more money.
 
-:bangbang: Disclaimer :bangbang: The provided sample dataset is very small (GitHub limits us to a max of 100Mb/file). Before deploying any trained models and making real trades, please collect more data using the provided scripts and validate the model over a longer time period. We claim no responsibility for any losses incurred when deloying this model. 
+:bangbang: Disclaimer :bangbang: The sample dataset provided is very small (GitHub limits file sizes to 100Mb). Before deploying any trained models and making real trades, please collect more data using the provided scripts and validate the model over a longer time period. We claim no responsibility for any losses incurred when deloying this model. 
 
 ## Model
 
