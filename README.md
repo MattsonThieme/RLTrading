@@ -84,11 +84,15 @@ Here, we can see that market moved down over the last 33 trades (20 profitable, 
 
 That's it! Tweak the model parameters and see what helps you earn more money.
 
-:exclamation::exclamation: Disclaimer :exclamation::exclamation: The provided sample dataset is very small (GitHub limits us to a max of 100Mb/file). Before deploying any trained models and making real trades, please collect more data using the provided scripts and validate the model over a longer time period. We claim no responsibility for any losses incurred when deloying this model. 
+:bangbang: Disclaimer :bangbang: The provided sample dataset is very small (GitHub limits us to a max of 100Mb/file). Before deploying any trained models and making real trades, please collect more data using the provided scripts and validate the model over a longer time period. We claim no responsibility for any losses incurred when deloying this model. 
 
 ## Model
 
-Now that the model is up and running, here are some details about what is going on under the hood.
+Now that the model is up and running, here are some details about what is going on under the hood. The custom network topology is shown below.
+
+![network model](supp/multiphase_network.png)
+
+For interpreting the timeseries data corresponding to historical price movements, we use an LSTM to generate embeddings of the input. Simultaneously, environmental parameters like asset status (is our money in our wallet, or out in the asset?) dictates what trades are legal, so we feed that separately into what we've called a 'legality network'. The outputs of the sequence network and legality network are fed into a final 'decision network' which produces the final decision to either buy, hold, or sell given the historical price data and environmental parameters.
 
 
 
