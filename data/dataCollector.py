@@ -1,3 +1,7 @@
+
+# Note: this collection script works but is a bit clunky - I'll push
+# a better version in the near future.
+
 import datetime
 import time
 import ccxt
@@ -5,7 +9,10 @@ import csv
 
 exchange = ccxt.binance ()
 
-symbol = 'ETH/USDT'
+asset = 'ETH'
+delay = 1
+
+symbol = '{}/USDT'.format(asset)
 
 eth = exchange.fetch_ticker(symbol)
 
@@ -15,9 +22,9 @@ to_delete = ['average', 'percentage', 'change', 'previousClose', 'info',
 for i in to_delete:
     del eth[i]
 
-write = ['time']
+write = []
 
-with open('ETH_1s.csv', 'w') as r:
+with open('{}_{}s.csv'.format(asset, str(delay)), 'w') as r:
     reader = csv.reader(r)
     try:
         row1 = next(reader)
@@ -27,27 +34,32 @@ with open('ETH_1s.csv', 'w') as r:
         writer = csv.writer(r)
         writer.writerow(write)
 
-delay = 1
 
 while True:
 
-    write = []
+    try:
+        eth = exchange.fetch_ticker(symbol)
+        start = time.time()
 
-    now = datetime.datetime.utcnow()
-    eth = exchange.fetch_ticker(symbol)
-    for i in to_delete:
-        del eth[i]
+        write = []
+        
+        for i in to_delete:
+            del eth[i]
 
-    write.append((now.hour*3600)+(now.minute*60)+now.second)
-    for i in eth:
-        write.append(eth[i])
+        for i in eth:
+            write.append(eth[i])
 
-    with open('ETH_1s.csv', "a") as f:
-        writer = csv.writer(f)
-        writer.writerow(write)
+        with open('{}_{}s.csv'.format(asset, str(delay)), "a") as f:
+            writer = csv.writer(f)
+            writer.writerow(write)
 
+        end = time.time()
 
-    time.sleep(delay)
+        time.sleep(delay - (end - start))
+
+    except:
+        # Occasionally the exchange won't respond, this lets it catch itself and continue
+        time.sleep(delay)
 
 
 
