@@ -94,7 +94,13 @@ Now that the model is up and running, here are some details about what is going 
 
 For interpreting the timeseries data corresponding to historical price movements, we use an LSTM to generate embeddings of the input. Simultaneously, environmental parameters like asset status (is our money in our wallet, or out in the asset?) dictates what trades are legal, so we feed that separately into what we've called a 'legality network'. The outputs of the sequence network and legality network are fed into a final 'decision network' which produces the final decision to either buy, hold, or sell given the historical price data and environmental parameters.
 
+## Rewards
 
+A main challenge in all reinforcement learning is reward engineering, and one of the main contributions of this project is its simple reward scheme, detailed below.
+
+![reward scheme](supp/reward_scheme.png)
+
+In essence, we recognize that all the steps leading to some final sale contributed to the acquisition of that sale - the time spend holding before the purchase, the purchase price, time spend holding the asset, and finally the sale price. Here, we assign all of those actions the reward of the final sale. This makes intuitive sense while also preventing the model from collapsing into a state in which it is always trying to either buy, hold, or sell.
 
 ## I/O
 
