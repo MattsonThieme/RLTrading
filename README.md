@@ -92,7 +92,7 @@ Now that the model is up and running, here are some details about what is going 
 
 ![network model](supp/multiphase_network.png)
 
-For interpreting the timeseries data corresponding to historical price movements, we use an LSTM to generate embeddings of the input. Simultaneously, environmental parameters like asset status (is our money in our wallet, or out in the asset?) dictates what trades are legal, so we feed that separately into what we've called a 'legality network'. The outputs of the sequence network and legality network are fed into a final 'decision network' which produces the final decision to either buy, hold, or sell given the historical price data and environmental parameters.
+For interpreting the timeseries data corresponding to historical price movements, we use an LSTM to generate embeddings of the input. Simultaneously, environmental parameters like asset status (is our money in our wallet, or out in the asset?), bought price, and hold time, dictates not only which trades are profitable, but legal, so we feed that separately into what we've called the legality network. The outputs of the sequence network and legality network are fed into a final decision network which produces the final decision to either buy, hold, or sell given the historical price data and environmental parameters.
 
 ## Rewards
 
@@ -104,5 +104,6 @@ In essence, we recognize that all the steps leading to some final sale contribut
 
 ## I/O
 
+As touched on in the previous section, this model ingests historical prices for some asset, as well as the parameters defining the trading environment, and outputs a softmax distribution over three actions corresponding to buying, holding or selling.
 
-The policy network is a custom network which attends over price movements and environmental parameters separately. Details can be found in the 
+
