@@ -301,17 +301,17 @@ class Agent(object):
         self.POLICY_UPDATE = configuration.POLICY_UPDATE  # Will update this actively in report (for now)
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
         #self.optimizer = optim.Adam(self.policy_net.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)  # Another optimizer - not sure which is optimal yet
-        self.total_steps = configuration.total_steps
+        self.total_steps = 0
         self.BATCH_SIZE = configuration.BATCH_SIZE
 
     def update_target(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
-    # Report wins/losses every 20 wins
+    # Report wins/losses every report_freq wins
     def report(self, ask, scale, step, total, last):
-        if (len(self.gains) >= 20) or (last):
+        if (len(self.gains) >= configuration.report_freq) or (last):
 
-            print("\nGlobal start: ${}, current: :${}  -- ({}/{})".format(round(self.initial_market_value*scale, 2), ask*scale, step, total))
+            print("\nGlobal start: ${}, current: :${}  -- ({}/{})".format(round(self.initial_market_value*scale, 2), round(ask*scale,2), step, total))
             print("Market moved ${} over the session".format(round((ask*scale) - self.session_begin_value,2)))
             print("Start: ${}, current: ${}".format(round(self.initial_market_value*scale,3), round(ask*scale,3)))
             print("     Session wins: {} @ $ {}, avg hold: {} steps".format(len(self.gains), self.investment_scale*round(sum(self.gains)/(len(self.gains)+1),5), round(sum(self.gain_hold)/(len(self.gain_hold)+1),0)))
