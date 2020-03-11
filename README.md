@@ -71,7 +71,7 @@ $ python dqn.py
 When training has begun, a report will be printed after every 20 profitable trades (this frequency can be modified in `configuration.py`). The report will look like the following:
 
 ```{shell}
-Global start: $12.43, current: :$12.87  -- (995/997)
+Global start: $12.43, current: :$12.87  -- (1381/2034)
 Market moved $-0.16 over the session
 Start: $12.434, current: $12.876
      Session wins: 20 @ $ 0.98, avg hold: 2.0 steps
@@ -80,13 +80,13 @@ Start: $12.434, current: $12.876
      Episode total: $33.84
 ``` 
 
-Here, we can see that market moved down over the last 33 trades (20 profitable, 13 losses) and we made $8.45 - pretty good! We are also shown information about the global start (first ask price in the dataset) and the ask price of the current step. The term `avg hold` represents how long, on average, we held the asset before selling it, and the dollar value after the @ is the average value of all the profitable or unprofitable trades. We can also see that we've made a total of $33.84 over the entire episode.
+Here, we can see that market moved -$0.16 over the last 33 trades (20 wins, 13 losses) and we made $8.45 - pretty good! We are also shown information about the global start (first ask price in the dataset) and the ask price of the current step. The term `avg hold` represents how long, on average, we held the asset before selling it, and the dollar value after the @ is the average value of all the profitable or unprofitable trades. We can also see that we've made a total of $33.84 over the entire episode.
 
 After each epoch, the policy network will be saved in the `src/` directory.
 
 That's it! Tweak the model parameters and see what helps you earn more money.
 
-:bangbang: Disclaimer :bangbang: The sample dataset provided is **very small** (GitHub limits file sizes to 100Mb). Before deploying any trained models and making real trades, please collect more data using the provided scripts and validate the model over a longer time period. We claim no responsibility for any losses incurred when deloying this model. 
+:bangbang: Disclaimer :bangbang: The sample dataset provided is **very small** (GitHub limits file sizes to 100Mb). Before deploying any trained models and making real trades, please collect more data using the provided scripts and validate the model over a longer time period. We claim no responsibility for any losses incurred when deloying this model.
 
 ## Model
 
