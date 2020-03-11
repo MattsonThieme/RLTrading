@@ -14,8 +14,8 @@ BATCH_SIZE = 2048          # Batch size
 # Data/Env parameters
 data_path = '../data/crypto/ETC_1s.csv'
 asset = 'ETC'              # Target asset
-minutes_back = 20          # Assumes a 1s sampling rate in raw data, how far to look into the past
-period = 30                # Assumes a 1s sampling rate in raw data, how many seconds between market queries
+minutes_back = 10          # Assumes a 1s sampling rate in raw data, how far to look into the past
+period = 15                # Assumes a 1s sampling rate in raw data, how many seconds between market queries
 params = ['ask']           # Parameters to consider - currently, we are only setup to look at ask price
 report_freq = 10           # Number of profitable trades to accumulate before reporting
 
