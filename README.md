@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="supp/visual.png" width="50%" height="50%">
+</p>
+
 # RLTrading
 
 Deep reinforcement learning for algorithmic cryptocurrency trading.
