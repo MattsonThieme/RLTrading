@@ -53,7 +53,7 @@ $ conda activate rltrade
 
 ## Data Acquisition (optional)
 
-For this project, I have included sample data so you can get started right away, but if you would like to collect your own data on an asset I haven't included, or at a frequency I haven't sampled, or just a larget dataset (GitHub limits file sizes to 100Mb) a script is available in [data/dataCollector.py](data/dataCollector.py). 
+For this project, I have included sample data so you can get started right away, but if you would like to collect your own data a script is available in [data/dataCollector.py](data/dataCollector.py). 
 
 To run the collection script, I recommend using a terminal multiplexer like [tmux](https://www.hamvocke.com/blog/a-quick-and-easy-guide-to-tmux/) on a small AWS instance. Edit parameters at the top of the file including 'symbol' and 'delay' (all parameters have descriptive labels followed by explanations of their function) then run:
 
