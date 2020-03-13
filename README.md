@@ -19,12 +19,12 @@ Sections 3 and 4 are integrated and controlled via a [configuration script](src/
 
 Before we move forward, note that that the current implementation is not restricted to trading cryptocurrencies, and can be applied equally to any stocks trading on any public exchanges. While I haven't integrated the functionality just yet (currently in-progress) I've included 20 years of DJIA data [here](data/djia/) in case you would like to start experimenting on your own. 
 
-###I/O
+### I/O
 
 Input: Historical price data + environmental parameters such as where our money currently sits (in our wallet or in the asset), the most recent bought price, and how long we've held the asset.
 Output: At each timestep, the model outputs a distribution over three actions: buy, hold, or sell. According to the action chosen (and the legality of such action, e.g. we cannot sell if we haven't bought an asset yet) we update the environmental parameters to reflect that choice and proceed to the next timestep.
 
-## Setup
+## Environment Setup
 
 Note: These instructions and setup scripts assume execution in Linux or MacOS environments with conda (for conda installation, see their [install page](https://docs.conda.io/en/latest/miniconda.html)), and as such may require some tweaking for full functionality on Windows.
 
@@ -63,7 +63,7 @@ To run the collection script, I recommend using a terminal multiplexer like [tmu
 
 This will create and continuously append a file with your target asset's ask price once every sampling period (delay). We'll see in subsequent sections how to use this new file for training (it's as simple as setting a single variable in the configuration file).
 
-## Training
+## Model Training
 
 Change directory into `src/`:
 
@@ -101,7 +101,7 @@ That's it! Tweak the model parameters and see what helps you earn more money.
 
 :bangbang: Disclaimer :bangbang: The sample dataset provided is **very small** (GitHub limits file sizes to 100Mb). Before deploying any trained models and making real trades, please collect more data using the provided scripts and validate the model over a longer time period. We claim no responsibility for any losses incurred when deloying this model.
 
-## Model
+## Model Architecture
 
 Now that the model is up and running, here are some details about what is going on under the hood. The custom network topology is shown below.
 
@@ -109,7 +109,7 @@ Now that the model is up and running, here are some details about what is going 
 
 We use an LSTM to generate embeddings for the timeseries data corresponding to historical price movements. Simultaneously, environmental parameters like asset status (is our money in our wallet, or out in the asset?), bought price, and hold time, dictate not only which trades are profitable, but legal, so we feed that separately into what we've called the legality network. The outputs of the sequence network and legality network are fed into a decision network which produces the final decision to either buy, hold, or sell given the historical price data and environmental parameters.
 
-## Rewards
+## Reward Scheme
 
 A main challenge in all reinforcement learning is reward engineering, and one of the main contributions of this project is its simple reward scheme, detailed below.
 
