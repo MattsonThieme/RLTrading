@@ -1,7 +1,6 @@
 
-## TODO ##
-# Point to appropriate data folder
-# Store 
+# This implements a custom multi-phase deep Q-learning network for 
+# trading cryptocurrencies.
 
 import math
 import random
@@ -46,23 +45,30 @@ class MultiPhase(nn.Module):
 
         # Legality network
         # Haven't included dropout here because properties are deterministic and not noisy
+        self.ll1dim = 512
+        self.ll2dim = 128
+
         prop_length = properties.size()[0]
-        dec_size = 8  # Size of the final embedding of the legality network, can try other values
-        self.ln1 = nn.Linear(prop_length, 128)
-        self.LLn1 = nn.LayerNorm(128)
-        self.ln2 = nn.Linear(128, 64)
-        self.LLn2 = nn.LayerNorm(64)
-        self.ln3 = nn.Linear(64, dec_size)
+        dec_size = 64  # Size of the final embedding of the legality network, can try other values
+        
+        self.ln1 = nn.Linear(prop_length, self.ll1dim)
+        self.LLn1 = nn.LayerNorm(self.ll1dim)
+        self.ln2 = nn.Linear(self.ll1dim, self.ll2dim)
+        self.LLn2 = nn.LayerNorm(self.ll2dim)
+        self.ln3 = nn.Linear(self.ll2dim, dec_size)
 
         # Decision network
+        self.l1dim = 500
+        self.l2dim = 1024
+        self.l3dim = 500
         self.output_dim = output_dim
-        self.dn1 = nn.Linear(dec_size+hidden_dim, 500)
-        self.DLn1 = nn.LayerNorm(500)
-        self.dn2 = nn.Linear(500, 200)
-        self.DLn2 = nn.LayerNorm(200)
-        self.dn3 = nn.Linear(200, 50)
-        self.DLn3 = nn.LayerNorm(50)
-        self.dn4 = nn.Linear(50, self.output_dim)
+        self.dn1 = nn.Linear(dec_size+hidden_dim, self.l1dim)
+        self.DLn1 = nn.LayerNorm(self.l1dim)
+        self.dn2 = nn.Linear(self.l1dim, self.l2dim)
+        self.DLn2 = nn.LayerNorm(self.l2dim)
+        self.dn3 = nn.Linear(self.l2dim, self.l3dim)
+        self.DLn3 = nn.LayerNorm(self.l3dim)
+        self.dn4 = nn.Linear(self.l3dim, self.output_dim)
 
         self.dropout = nn.Dropout(p=0.2)
 
@@ -247,7 +253,7 @@ class Agent(object):
 
         # Model parameters
         self.input_dimension = state_size
-        self.hidden_dim = 32
+        self.hidden_dim = 128
         self.n_actions = 3  # Buy, hold, sell
 
         # State parameters
@@ -325,9 +331,12 @@ class Agent(object):
             self.gain_hold = []
             self.loss_hold = []
 
+
+    # Try removing hold time altogether
+
     # Generate new properties after each decision
     def gen_properties(self):
-        return torch.tensor([self.asset_status, self.bought, 2.0/(self.hold_time+1)-1]).type('torch.FloatTensor')  # 2/self.hold_time because I think the enormous numbers are throwing off the L-network. Scales to [1, -1]
+        return torch.tensor([self.asset_status, self.bought]).type('torch.FloatTensor')  # 2/self.hold_time because I think the enormous numbers are throwing off the L-network. Scales to [1, -1]     2.0/(self.hold_time+1)-1
 
     # Reset environment each episode
     def reset(self):
@@ -408,9 +417,9 @@ class Agent(object):
                 temp_reward = decision[3]  # Punish illegal actions (keep existing reward)
             else:
                 if reward > 0:
-                    temp_reward = reward/(1 + self.hold_time/50)  # Current reward from this trade
+                    temp_reward = reward#/(1 + self.hold_time/50)  # Current reward from this trade
                 else:
-                    temp_reward = reward
+                    temp_reward = reward*self.hold_time
 
             target = decision[4]
             next_reward = decision[5]
@@ -571,7 +580,7 @@ class execute(object):
             print("\n\nEpoch {}/{}\n\n".format(j, self.env.num_episodes))
             print("#"*60)
             print("\n\n")
-            self.agent.total_steps = 0
+            #self.agent.total_steps = 0
 
             # Iterate over states
             for e, episode in enumerate(self.env.train_env):
