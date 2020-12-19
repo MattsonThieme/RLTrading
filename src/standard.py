@@ -1,29 +1,13 @@
-# Standard strategy
+# Experimental heuristic strategy
+# - experimenting at different timescales
+
 #import configuration
 import csv
 import numpy as np
 
 import matplotlib.pyplot as plt
 
-#data_path = '../data/BTC-ETH-XLM-CVC_5s.csv'
 data_path = 'ETH_1s_4.csv'
-#data_path = 'VOO_copy.csv'
-
-#assets = configuration.asset_names
-
-'''
-# 5s gnn collection
-with open(data_path, 'r') as f:
-    data = csv.reader(f)
-    data = list(data)
-    labels = data.pop(0)
-
-    for row in data:
-        for i, col in enumerate(row):
-            prices[i].append(col)
-
-data = np.array(prices, dtype=float)
-'''
 
 # Standard 1s collection
 prices = [[]]
@@ -45,10 +29,7 @@ length = len(prices[0])
 prices = np.array(prices[0], dtype=float)
 prices = prices[indices]
 
-
 data = np.array([list(prices)], dtype=float)
-
-
 
 def slope(last, current):
     return (current - last)
